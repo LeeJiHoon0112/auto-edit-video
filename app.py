@@ -144,6 +144,9 @@ class App:
         ttk.Checkbutton(line, text="Ken Burns (zoom ảnh tĩnh)",
                         variable=self.kenburns).pack(side="left", padx=12)
         ttk.Checkbutton(line, text="Chèn phụ đề", variable=self.subs).pack(side="left")
+        self.crossfade = tk.BooleanVar(value=False)
+        ttk.Checkbutton(line, text="Crossfade ảnh", variable=self.crossfade).pack(
+            side="left", padx=8)
 
         line2 = ttk.Frame(f2)
         line2.pack(fill="x", padx=10, pady=(0, 6))
@@ -476,6 +479,8 @@ class App:
             cmd += ["--no-kenburns"]
         if not self.subs.get():
             cmd += ["--no-subtitles"]
+        if self.crossfade.get():
+            cmd += ["--transition", "fade"]
 
         self.log.delete("1.0", "end")
         self._log("$ render...\n\n")

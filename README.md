@@ -66,6 +66,7 @@ python auto_edit.py --seconds-per-image 8   # đổi ảnh mỗi 8s, lặp vòng
 python auto_edit.py --image-mode spread     # rải đều toàn bộ ảnh theo thời lượng
 python auto_edit.py --image-mode srt        # 1 ảnh / 1 đoạn phụ đề (cần nhiều ảnh)
 python auto_edit.py --clip-fit auto         # khớp clip Veo vào cảnh: auto|speed|cut|loop
+python auto_edit.py --transition fade       # crossfade (tan dần) giữa các ẢNH tĩnh
 python auto_edit.py --no-kenburns           # tắt hiệu ứng zoom (ảnh đứng yên)
 python auto_edit.py --no-subtitles          # KHÔNG burn phụ đề vào video
 python auto_edit.py --out output/tap1.mp4   # đổi tên file ra

@@ -40,7 +40,7 @@ WIDTH = 1920
 HEIGHT = 1080
 FPS = 30
 FADE = 0.4               # thời gian fade in/out mỗi cảnh (giây)
-KENBURNS_AMOUNT = 0.12   # mức zoom Ken Burns (0.12 = phóng to thêm 12%)
+KENBURNS_AMOUNT = 0.16   # mức zoom Ken Burns (0.16 = phóng to thêm 16%)
 IMG_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".webm")
 AUDIO_NAMES = ("voice.mp3", "voice.wav", "voice.m4a", "voiceover.mp3", "voiceover.wav")
@@ -176,7 +176,8 @@ def probe_duration(path):
 # ----------------------------------------------------------------------------
 # Tạo từng cảnh (ảnh -> clip mp4) với Ken Burns + fade
 # ----------------------------------------------------------------------------
-def build_clip(media, duration, out_path, kenburns=True, index=0, clip_fit="auto"):
+def build_clip(media, duration, out_path, kenburns=True, index=0, clip_fit="auto",
+               edge_fade=True):
     frames = max(1, round(duration * FPS))
     is_video = media.lower().endswith(VIDEO_EXTS)
 
@@ -212,22 +213,29 @@ def build_clip(media, duration, out_path, kenburns=True, index=0, clip_fit="auto
 
     # Ảnh tĩnh
     if kenburns:
-        rate = KENBURNS_AMOUNT / frames           # tăng zoom mỗi frame
-        zmax = 1.0 + KENBURNS_AMOUNT
-        # scale lên lớn để zoompan mượt, crop đúng tỉ lệ 16:9 trước
-        vf = (
-            f"scale={WIDTH*2}:{HEIGHT*2}:force_original_aspect_ratio=increase,"
-            f"crop={WIDTH*2}:{HEIGHT*2},"
-            f"zoompan=z='min(zoom+{rate:.6f},{zmax:.3f})':"
-            f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
-            f"d={frames}:s={WIDTH}x{HEIGHT}:fps={FPS},"
-        )
+        amt = KENBURNS_AMOUNT
+        zmax = 1.0 + amt
+        fr = frames
+        pre = (f"scale={WIDTH*2}:{HEIGHT*2}:force_original_aspect_ratio=increase,"
+               f"crop={WIDTH*2}:{HEIGHT*2}")
+        cx, cy = "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"
+        v = index % 4
+        if v == 0:        # zoom in, giữa
+            z, x, y = f"1+{amt}*on/{fr}", cx, cy
+        elif v == 1:      # zoom out, giữa
+            z, x, y = f"{zmax:.3f}-{amt}*on/{fr}", cx, cy
+        elif v == 2:      # zoom in + lia trái -> phải
+            z, x, y = f"1+{amt}*on/{fr}", f"(iw-iw/zoom)*on/{fr}", cy
+        else:             # zoom in + lia phải -> trái
+            z, x, y = f"1+{amt}*on/{fr}", f"(iw-iw/zoom)*(1-on/{fr})", cy
+        vf = (f"{pre},zoompan=z='{z}':x='{x}':y='{y}':"
+              f"d={fr}:s={WIDTH}x{HEIGHT}:fps={FPS},")
     else:
         vf = (f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase,"
               f"crop={WIDTH}:{HEIGHT},fps={FPS},")
 
-    # fade in/out nếu cảnh đủ dài
-    if duration > 2 * FADE + 0.1:
+    # fade in/out viền (tắt khi dùng crossfade vì xfade lo chuyển cảnh)
+    if edge_fade and duration > 2 * FADE + 0.1:
         vf += (f"fade=t=in:st=0:d={FADE},"
                f"fade=t=out:st={duration - FADE:.3f}:d={FADE},")
     vf += "setsar=1,format=yuv420p"
@@ -236,6 +244,38 @@ def build_clip(media, duration, out_path, kenburns=True, index=0, clip_fit="auto
            "-vf", vf, "-c:v", "libx264", "-preset", "medium", "-crf", "20",
            out_path]
     run(cmd)
+
+
+# ----------------------------------------------------------------------------
+# Crossfade (chỉ giữa các ẢNH liên tiếp) + nối các đoạn
+# ----------------------------------------------------------------------------
+def xfade_group(clip_paths, lens, dur, out_path):
+    """Nối 1 nhóm ảnh bằng crossfade (xfade). lens = độ dài render mỗi clip."""
+    inputs = []
+    for p in clip_paths:
+        inputs += ["-i", p]
+    fc = []
+    prev = "[0:v]"
+    cum = lens[0]
+    for j in range(1, len(clip_paths)):
+        off = cum - dur
+        lbl = f"[x{j}]"
+        fc.append(f"{prev}[{j}:v]xfade=transition=fade:"
+                  f"duration={dur:.3f}:offset={off:.3f}{lbl}")
+        prev = lbl
+        cum = cum + lens[j] - dur
+    cmd = [FFMPEG, "-y"] + inputs + ["-filter_complex", ";".join(fc),
+           "-map", prev, "-r", str(int(FPS)), "-c:v", "libx264",
+           "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p", out_path]
+    run(cmd)
+
+
+def concat_copy(paths, out_path, tmp):
+    lst = os.path.join(tmp, "concat_seg.txt")
+    with open(lst, "w", encoding="utf-8") as f:
+        for p in paths:
+            f.write(f"file '{p.replace(chr(92), '/')}'\n")
+    run([FFMPEG, "-y", "-f", "concat", "-safe", "0", "-i", lst, "-c", "copy", out_path])
 
 
 # ----------------------------------------------------------------------------
@@ -263,6 +303,10 @@ def main():
     ap.add_argument("--clip-fit", choices=["auto", "speed", "cut", "loop"], default="auto",
                     help="Khớp clip video vào cảnh: auto (khuyên) | speed: đổi tốc độ | "
                          "cut: cắt lấy đầu | loop: lặp cho đủ")
+    ap.add_argument("--transition", choices=["none", "fade"], default="none",
+                    help="Hiệu ứng chuyển cảnh cho ẢNH TĨNH: none | fade (crossfade)")
+    ap.add_argument("--xfade-duration", type=float, default=0.5,
+                    help="Thời gian crossfade giữa 2 ảnh (giây)")
     ap.add_argument("--no-kenburns", action="store_true")
     ap.add_argument("--no-subtitles", action="store_true")
     ap.add_argument("--keep-temp", action="store_true")
@@ -338,23 +382,50 @@ def main():
 
     tmp = tempfile.mkdtemp(prefix="autoedit_")
     try:
-        # 1) Render từng cảnh
-        clips = []
+        # 1) Render từng cảnh (ảnh nằm giữa 2 ảnh -> render dài thêm để crossfade)
+        is_img = [not s.lower().endswith(VIDEO_EXTS) for s, _ in scenes]
+        use_xf = (args.transition == "fade")
+        D = max(0.15, min(args.xfade_duration, 1.5)) if use_xf else 0.0
+
+        clips, rlen = [], []
         for i, (src, dur) in enumerate(scenes):
+            extra = D if (use_xf and is_img[i] and i + 1 < len(scenes)
+                          and is_img[i + 1]) else 0.0
             clip = os.path.join(tmp, f"clip_{i:04d}.mp4")
             print(f"  [{i+1}/{len(scenes)}] {os.path.basename(src)}  ({dur:.2f}s)")
-            build_clip(src, dur, clip, kenburns=not args.no_kenburns, index=i,
-                       clip_fit=args.clip_fit)
+            build_clip(src, dur + extra, clip, kenburns=not args.no_kenburns, index=i,
+                       clip_fit=args.clip_fit, edge_fade=not use_xf)
             clips.append(clip)
+            rlen.append(dur + extra)
 
-        # 2) Nối các cảnh (copy, không re-encode)
-        listfile = os.path.join(tmp, "concat.txt")
-        with open(listfile, "w", encoding="utf-8") as f:
-            for c in clips:
-                f.write(f"file '{c.replace(chr(92), '/')}'\n")
+        # 2) Ghép các cảnh
         silent = os.path.join(tmp, "video_silent.mp4")
-        run([FFMPEG, "-y", "-f", "concat", "-safe", "0", "-i", listfile,
-             "-c", "copy", silent])
+        if not use_xf:
+            listfile = os.path.join(tmp, "concat.txt")
+            with open(listfile, "w", encoding="utf-8") as f:
+                for c in clips:
+                    f.write(f"file '{c.replace(chr(92), '/')}'\n")
+            run([FFMPEG, "-y", "-f", "concat", "-safe", "0", "-i", listfile,
+                 "-c", "copy", silent])
+        else:
+            print("• Áp crossfade cho các ảnh tĩnh...")
+            segments, i, n = [], 0, len(clips)
+            while i < n:
+                if is_img[i]:
+                    j = i
+                    while j < n and is_img[j]:
+                        j += 1
+                    if j - i == 1:
+                        segments.append(clips[i])
+                    else:
+                        seg = os.path.join(tmp, f"seg_{i:04d}.mp4")
+                        xfade_group(clips[i:j], rlen[i:j], D, seg)
+                        segments.append(seg)
+                    i = j
+                else:
+                    segments.append(clips[i])
+                    i += 1
+            concat_copy(segments, silent, tmp)
 
         # 3) Pass cuối: burn phụ đề + ghép voice
         os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
