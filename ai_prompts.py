@@ -33,6 +33,7 @@ For EACH scene, write ONE concise English video prompt that:
 {style}
 ---
 - Is concise and iconic (about 1-2 sentences), written in English.
+- Do NOT begin the prompt with a scene-mode or era label (e.g. "MODERN:", "PREHISTORIC DAY:", "Concept mode:"); write the visual description directly.
 
 Return ONLY a JSON array of strings: exactly one prompt per scene, in the SAME ORDER as given. No commentary, no extra keys."""
 
@@ -47,6 +48,7 @@ For EACH scene, write ONE concise English image prompt that:
 {style}
 ---
 - Is concise and iconic (about 1-2 sentences), written in English.
+- Do NOT begin the prompt with a scene-mode or era label (e.g. "MODERN:", "PREHISTORIC DAY:", "Concept mode:"); write the visual description directly.
 
 Return ONLY a JSON array of strings: exactly one prompt per scene, in the SAME ORDER as given. No commentary, no extra keys."""
 
@@ -63,7 +65,8 @@ def _call(api_key, model, system, user, timeout=120):
     body = {
         "system_instruction": {"parts": [{"text": system}]},
         "contents": [{"role": "user", "parts": [{"text": user}]}],
-        "generationConfig": {"temperature": 0.85, "responseMimeType": "application/json"},
+        "generationConfig": {"temperature": 0.85, "responseMimeType": "application/json",
+                             "maxOutputTokens": 8192},
     }
     req = urllib.request.Request(
         url, data=json.dumps(body).encode("utf-8"),
@@ -130,23 +133,43 @@ def _parse_array(txt, expected):
         nl = txt.find("\n")
         if nl != -1 and len(txt[:nl]) < 12:
             txt = txt[nl + 1:]
-    try:
-        arr = json.loads(txt)
-        if isinstance(arr, list):
-            arr = [str(x).replace("\n", " ").strip() for x in arr]
-            if len(arr) < expected:
-                arr += [""] * (expected - len(arr))
-            return arr[:expected]
-    except Exception:
-        pass
-    lines = [ln.strip(" -\t\"").strip() for ln in txt.splitlines() if ln.strip()]
+    txt = txt.strip()
+
+    # 1) Thử JSON trực tiếp + vài cách "vá" khi bị cắt cụt
+    candidates = [txt]
+    fixed = txt.rstrip().rstrip(",")
+    if fixed and not fixed.endswith("]"):
+        # nếu thiếu ] cuối (có thể do bị cắt), thử thêm vào
+        candidates += [fixed + "]", fixed + '"]']
+    for cand in candidates:
+        try:
+            arr = json.loads(cand)
+            if isinstance(arr, list) and arr:
+                arr = [str(x).replace("\n", " ").strip() for x in arr if str(x).strip()]
+                if len(arr) < expected:
+                    arr += [""] * (expected - len(arr))
+                return arr[:expected]
+        except Exception:
+            pass
+
+    # 2) Fallback: tách dòng + dọn sạch [ ] " , ở 2 đầu
+    lines = []
+    for ln in txt.splitlines():
+        s = ln.strip()
+        if s in ("[", "]", "",):
+            continue
+        s = s.strip(",").strip().strip('"').strip().strip(",").strip()
+        if s.startswith("- "):
+            s = s[2:].strip()
+        if s:
+            lines.append(s)
     if len(lines) < expected:
         lines += [""] * (expected - len(lines))
     return lines[:expected]
 
 
 def generate_prompts(scenes_text, style, api_key, model=None,
-                     batch=20, progress=None, mode="video"):
+                     batch=12, progress=None, mode="video"):
     """
     scenes_text : list[str] — lời nói của từng cảnh, theo thứ tự.
     style       : str       — Visual Style Profile của kênh.
