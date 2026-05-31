@@ -53,6 +53,26 @@ For EACH scene, write ONE concise English image prompt that:
 Return ONLY a JSON array of strings: exactly one prompt per scene, in the SAME ORDER as given. No commentary, no extra keys."""
 
 
+SYSTEM_CONTENT_VIDEO = """You describe ONLY the visual CONTENT of each scene for a video generator (faceless narrated videos). A separate visual-style system already controls the art style, so you MUST NOT mention any art style, rendering, colors, line work, textures, or visual aesthetics.
+
+For EACH scene (you get its NARRATION), write ONE short English line describing:
+- WHO / WHAT appears and a minimal setting.
+- The ACTION / motion happening (use action verbs — it is a moving clip).
+- A camera framing (wide / medium / close-up).
+Keep it to ONE concise sentence. Do NOT describe style, colors, or how it is drawn/rendered.
+
+Return ONLY a JSON array of strings, exactly one per scene, in the SAME ORDER. No commentary, no extra keys."""
+
+SYSTEM_CONTENT_IMAGE = """You describe ONLY the visual CONTENT of each scene for an image generator (faceless narrated videos). A separate visual-style system already controls the art style, so you MUST NOT mention any art style, rendering, colors, line work, textures, or visual aesthetics.
+
+For EACH scene (you get its NARRATION), write ONE short English line describing:
+- WHO / WHAT appears and a minimal setting (a single STILL moment — no motion, no camera movement).
+- A camera framing (wide / medium / close-up).
+Keep it to ONE concise sentence. Do NOT describe style, colors, or how it is drawn/rendered.
+
+Return ONLY a JSON array of strings, exactly one per scene, in the SAME ORDER. No commentary, no extra keys."""
+
+
 class GeminiError(Exception):
     def __init__(self, code, detail=""):
         self.code = code
@@ -169,21 +189,26 @@ def _parse_array(txt, expected):
 
 
 def generate_prompts(scenes_text, style, api_key, model=None,
-                     batch=12, progress=None, mode="video"):
+                     batch=12, progress=None, mode="video", embed_style=True):
     """
     scenes_text : list[str] — lời nói của từng cảnh, theo thứ tự.
     style       : str       — Visual Style Profile của kênh.
-    mode        : "video" (mặc định, có chuyển động) | "image" (ảnh tĩnh).
+    mode        : "video" (có chuyển động) | "image" (ảnh tĩnh).
+    embed_style : True = nhúng style vào prompt | False = CHỈ viết nội dung
+                  (để style lock của tool video lo).
     Trả về list[str] prompt, cùng độ dài scenes_text. Tự đổi model nếu 429/404.
     """
     if not api_key or not api_key.strip():
         raise RuntimeError("Chưa nhập API key (vào tab Cài đặt).")
-    if not style or not style.strip():
+    if embed_style and (not style or not style.strip()):
         raise RuntimeError("Chưa có Style Profile (vào tab Cài đặt để thêm/chọn).")
 
     api_key = api_key.strip()
-    template = SYSTEM_IMAGE if mode == "image" else SYSTEM_VIDEO
-    system = template.format(style=style.strip())
+    if embed_style:
+        template = SYSTEM_IMAGE if mode == "image" else SYSTEM_VIDEO
+        system = template.format(style=style.strip())
+    else:
+        system = SYSTEM_CONTENT_IMAGE if mode == "image" else SYSTEM_CONTENT_VIDEO
     order = ([model] if model else []) + [m for m in PREFERRED_MODELS if m != model]
     chosen = None
     out = []

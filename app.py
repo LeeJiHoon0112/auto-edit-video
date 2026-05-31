@@ -38,6 +38,7 @@ def default_config():
         "profiles": {"Người que": DEFAULT_STYLE},
         "active_profile": "Người que",
         "prompt_mode": "video",
+        "tool_style": False,
     }
 
 
@@ -156,6 +157,14 @@ class App:
                         value="video", command=self._save_mode).pack(side="left", padx=8)
         ttk.Radiobutton(line2, text="🖼️ Ảnh tĩnh", variable=self.prompt_mode,
                         value="image", command=self._save_mode).pack(side="left", padx=8)
+
+        line3 = ttk.Frame(f2)
+        line3.pack(fill="x", padx=10, pady=(0, 6))
+        self.tool_style = tk.BooleanVar(value=self.cfg.get("tool_style", False))
+        ttk.Checkbutton(
+            line3, variable=self.tool_style, command=self._save_toolstyle,
+            text="🔒 Style nằm trong tool video — Gemini chỉ viết nội dung "
+                 "(BẬT khi tool video có Style Lock)").pack(side="left")
 
         # Buttons
         bar = ttk.Frame(parent)
@@ -331,6 +340,10 @@ class App:
         self.cfg["prompt_mode"] = self.prompt_mode.get()
         save_config(self.cfg)
 
+    def _save_toolstyle(self):
+        self.cfg["tool_style"] = self.tool_style.get()
+        save_config(self.cfg)
+
     def check_api(self):
         self._save_key()
         key = self.cfg["gemini_key"]
@@ -392,13 +405,15 @@ class App:
         name = self.profile_var.get()
         style = self.cfg["profiles"].get(name, "")
         key = self.cfg.get("gemini_key", "")
+        embed = not self.tool_style.get()
         if not key.strip():
             messagebox.showwarning("Thiếu API key",
                                    "Vào tab Cài đặt nhập Gemini API key trước nhé.")
             return
-        if not style.strip():
+        if embed and not style.strip():
             messagebox.showwarning("Thiếu style",
-                                   "Style profile đang trống. Vào tab Cài đặt để dán nội dung.")
+                                   "Style profile đang trống. Vào tab Cài đặt để dán nội dung, "
+                                   "hoặc tick 'Style nằm trong tool video'.")
             return
         try:
             target = float(self.secs.get())
@@ -420,15 +435,16 @@ class App:
                 texts = [" ".join(t.strip() for t in s["texts"]).strip() for s in scenes]
                 mode = self.prompt_mode.get()
                 loai = "ẢNH tĩnh" if mode == "image" else "VIDEO"
+                kieu = "kèm style" if embed else "chỉ nội dung (style ở tool)"
                 self.q.put(("line", f"• {len(segs)} đoạn → {len(scenes)} cảnh. "
-                                    f"Gọi Gemini viết prompt {loai}...\n"))
+                                    f"Gọi Gemini viết prompt {loai} [{kieu}]...\n"))
 
                 def prog(done, total):
                     self.q.put(("line", f"   ...đã viết {done}/{total} prompt\n"))
 
                 prompts = ai_prompts.generate_prompts(
                     texts, style, key, model=self.cfg.get("model"),
-                    progress=prog, mode=mode)
+                    progress=prog, mode=mode, embed_style=embed)
 
                 # Ghi veo_prompts.txt
                 vp = dflt("veo_prompts.txt")
