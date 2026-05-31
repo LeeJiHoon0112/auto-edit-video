@@ -59,9 +59,10 @@ Nếu bạn dùng tool video AI (Veo...) và muốn tool **tự viết prompt** 
 
 **Mỗi video — tab `🎬 Làm video`:**
 1. Chọn **File SRT** + chọn **Style Profile** (vừa lưu).
-2. Bấm **🤖 TẠO PROMPT (AI)** → chờ chút → ra file `veo_prompts.txt` (mỗi dòng 1 prompt).
-3. Mở `veo_prompts.txt`, copy từng prompt sang Veo để tạo clip → đặt tên `01, 02...` bỏ vào thư mục ảnh/clip.
-4. Bấm **▶ RENDER VIDEO**.
+2. Chọn **Loại prompt AI**: 🎬 Video (cho Veo/Kling) hoặc 🖼️ Ảnh tĩnh (cho Midjourney/DALL-E/Flux).
+3. Bấm **🤖 TẠO PROMPT (AI)** → chờ chút → ra file `veo_prompts.txt` (mỗi dòng 1 prompt).
+4. Mở `veo_prompts.txt`, copy từng prompt sang tool tạo ảnh/video → đặt tên `01, 02...` bỏ vào thư mục ảnh/clip.
+5. Bấm **▶ RENDER VIDEO**.
 
 > 💡 Mỗi người tự dùng API key của mình. Gemini có bản miễn phí, đủ dùng cho việc này.
 

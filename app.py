@@ -37,6 +37,7 @@ def default_config():
         "model": "gemini-3.5-flash",
         "profiles": {"Người que": DEFAULT_STYLE},
         "active_profile": "Người que",
+        "prompt_mode": "video",
     }
 
 
@@ -143,6 +144,15 @@ class App:
         ttk.Checkbutton(line, text="Ken Burns (zoom ảnh tĩnh)",
                         variable=self.kenburns).pack(side="left", padx=12)
         ttk.Checkbutton(line, text="Chèn phụ đề", variable=self.subs).pack(side="left")
+
+        line2 = ttk.Frame(f2)
+        line2.pack(fill="x", padx=10, pady=(0, 6))
+        ttk.Label(line2, text="Loại prompt AI:").pack(side="left")
+        self.prompt_mode = tk.StringVar(value=self.cfg.get("prompt_mode", "video"))
+        ttk.Radiobutton(line2, text="🎬 Video (có chuyển động)", variable=self.prompt_mode,
+                        value="video", command=self._save_mode).pack(side="left", padx=8)
+        ttk.Radiobutton(line2, text="🖼️ Ảnh tĩnh", variable=self.prompt_mode,
+                        value="image", command=self._save_mode).pack(side="left", padx=8)
 
         # Buttons
         bar = ttk.Frame(parent)
@@ -314,6 +324,10 @@ class App:
         save_config(self.cfg)
         self.status.set("Đã lưu API key.")
 
+    def _save_mode(self):
+        self.cfg["prompt_mode"] = self.prompt_mode.get()
+        save_config(self.cfg)
+
     def check_api(self):
         self._save_key()
         key = self.cfg["gemini_key"]
@@ -401,14 +415,17 @@ class App:
                 segs = ae.parse_srt(srt)
                 scenes = bs.group_scenes(segs, target)
                 texts = [" ".join(t.strip() for t in s["texts"]).strip() for s in scenes]
+                mode = self.prompt_mode.get()
+                loai = "ẢNH tĩnh" if mode == "image" else "VIDEO"
                 self.q.put(("line", f"• {len(segs)} đoạn → {len(scenes)} cảnh. "
-                                    f"Gọi Gemini viết prompt...\n"))
+                                    f"Gọi Gemini viết prompt {loai}...\n"))
 
                 def prog(done, total):
                     self.q.put(("line", f"   ...đã viết {done}/{total} prompt\n"))
 
                 prompts = ai_prompts.generate_prompts(
-                    texts, style, key, model=self.cfg.get("model"), progress=prog)
+                    texts, style, key, model=self.cfg.get("model"),
+                    progress=prog, mode=mode)
 
                 # Ghi veo_prompts.txt
                 vp = dflt("veo_prompts.txt")

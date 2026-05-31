@@ -22,12 +22,26 @@ PREFERRED_MODELS = [
 GEMINI_MODEL = PREFERRED_MODELS[0]
 API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
-SYSTEM_TEMPLATE = """You are an expert at writing VIDEO-generation prompts (for tools like Google Veo) for faceless narrated videos.
+SYSTEM_VIDEO = """You are an expert at writing VIDEO-generation prompts (for tools like Google Veo) for faceless narrated videos.
 
 You will receive a numbered list of scenes; each scene has the NARRATION spoken during it.
 For EACH scene, write ONE concise English video prompt that:
 - Visually conveys the MEANING of that scene's narration (not a literal word-for-word transcription).
 - Describes MOTION / action (these are short moving video clips, not still images): use action verbs.
+- STRICTLY follows this VISUAL STYLE PROFILE, applied to every prompt, keeping the character/style consistent across all scenes:
+---
+{style}
+---
+- Is concise and iconic (about 1-2 sentences), written in English.
+
+Return ONLY a JSON array of strings: exactly one prompt per scene, in the SAME ORDER as given. No commentary, no extra keys."""
+
+SYSTEM_IMAGE = """You are an expert at writing IMAGE-generation prompts (for tools like Midjourney, DALL-E, Imagen, Flux) for faceless narrated videos.
+
+You will receive a numbered list of scenes; each scene has the NARRATION spoken during it.
+For EACH scene, write ONE concise English image prompt that:
+- Visually conveys the MEANING of that scene's narration (not a literal word-for-word transcription).
+- Describes a SINGLE STILL image composition (subject, setting, framing, lighting). Do NOT describe motion, action over time, or camera movement — it is one frozen frame.
 - STRICTLY follows this VISUAL STYLE PROFILE, applied to every prompt, keeping the character/style consistent across all scenes:
 ---
 {style}
@@ -132,10 +146,11 @@ def _parse_array(txt, expected):
 
 
 def generate_prompts(scenes_text, style, api_key, model=None,
-                     batch=20, progress=None):
+                     batch=20, progress=None, mode="video"):
     """
     scenes_text : list[str] — lời nói của từng cảnh, theo thứ tự.
     style       : str       — Visual Style Profile của kênh.
+    mode        : "video" (mặc định, có chuyển động) | "image" (ảnh tĩnh).
     Trả về list[str] prompt, cùng độ dài scenes_text. Tự đổi model nếu 429/404.
     """
     if not api_key or not api_key.strip():
@@ -144,7 +159,8 @@ def generate_prompts(scenes_text, style, api_key, model=None,
         raise RuntimeError("Chưa có Style Profile (vào tab Cài đặt để thêm/chọn).")
 
     api_key = api_key.strip()
-    system = SYSTEM_TEMPLATE.format(style=style.strip())
+    template = SYSTEM_IMAGE if mode == "image" else SYSTEM_VIDEO
+    system = template.format(style=style.strip())
     order = ([model] if model else []) + [m for m in PREFERRED_MODELS if m != model]
     chosen = None
     out = []
