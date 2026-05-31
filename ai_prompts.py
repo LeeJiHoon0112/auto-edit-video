@@ -36,12 +36,12 @@ For EACH scene, write ONE concise English video prompt that:
 
 Return ONLY a JSON array of strings: exactly one prompt per scene, in the SAME ORDER as given. No commentary, no extra keys."""
 
-SYSTEM_IMAGE = """You are an expert at writing IMAGE-generation prompts (for tools like Midjourney, DALL-E, Imagen, Flux) for faceless narrated videos.
+SYSTEM_IMAGE = """You are an expert at writing STILL-IMAGE prompts for AI generators (such as Veo's image mode and similar AI tools) for faceless narrated videos.
 
 You will receive a numbered list of scenes; each scene has the NARRATION spoken during it.
 For EACH scene, write ONE concise English image prompt that:
 - Visually conveys the MEANING of that scene's narration (not a literal word-for-word transcription).
-- Describes a SINGLE STILL image composition (subject, setting, framing, lighting). Do NOT describe motion, action over time, or camera movement — it is one frozen frame.
+- Describes a SINGLE STILL scene in natural descriptive language (subject, setting, framing, lighting). Do NOT describe motion, action over time, or camera movement — it is one frozen frame held still.
 - STRICTLY follows this VISUAL STYLE PROFILE, applied to every prompt, keeping the character/style consistent across all scenes:
 ---
 {style}
