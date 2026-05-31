@@ -4,6 +4,9 @@ Tool tự động **ghép ảnh/video khớp phụ đề SRT + voiceover → xu�
 Mỗi đoạn phụ đề (SRT) tương ứng 1 ảnh, hiển thị đúng khoảng thời gian của đoạn đó —
 có hiệu ứng zoom Ken Burns, fade chuyển cảnh, và phụ đề tiếng Việt burn sẵn vào video.
 
+> 🆕 **Người mới bắt đầu?** Xem [HƯỚNG DẪN.md](HUONG%20DAN.md) — chỉ từng bước tải, cài, dùng.
+> Tóm tắt: `git clone` → bấm **`install.bat`** → bấm **`run.bat`**.
+
 ## 🔄 Cập nhật tool
 
 Khi có bản mới, chỉ cần **double-click `update.bat`** — nó tự tải code mới nhất từ GitHub về
