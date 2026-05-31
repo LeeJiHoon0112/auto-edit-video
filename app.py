@@ -34,7 +34,7 @@ DEFAULT_STYLE = (
 def default_config():
     return {
         "gemini_key": "",
-        "model": "gemini-2.0-flash",
+        "model": "gemini-2.5-flash",
         "profiles": {"Người que": DEFAULT_STYLE},
         "active_profile": "Người que",
     }
@@ -43,7 +43,7 @@ def default_config():
 def load_config():
     cfg = default_config()
     try:
-        with open(CONFIG_PATH, encoding="utf-8") as f:
+        with open(CONFIG_PATH, encoding="utf-8-sig") as f:
             data = json.load(f)
         cfg.update({k: data[k] for k in cfg if k in data})
         if not cfg["profiles"]:
@@ -323,7 +323,10 @@ class App:
         def worker():
             try:
                 import ai_prompts
-                ok, msg = ai_prompts.check_connection(key, self.cfg.get("model"))
+                ok, msg, model = ai_prompts.check_connection(key, self.cfg.get("model"))
+                if ok and model:
+                    self.cfg["model"] = model
+                    save_config(self.cfg)
             except Exception as e:  # noqa
                 ok, msg = False, str(e)
             self.q.put(("apiresult", (ok, msg)))

@@ -5,12 +5,21 @@ ai_prompts.py — Gọi Google Gemini để tự viết PROMPT VIDEO cho từng 
 
 Gọi REST API trực tiếp bằng thư viện chuẩn (urllib) -> KHÔNG cần cài package.
 Lấy API key miễn phí tại: https://aistudio.google.com  (Get API key)
+
+Tự động chọn model còn hạn mức: nếu model đầu bị 429/404 sẽ thử model kế tiếp.
 """
 import json
 import urllib.request
 import urllib.error
 
-GEMINI_MODEL = "gemini-2.0-flash"
+# Thứ tự ưu tiên model (cái nào còn free + chạy được thì dùng)
+PREFERRED_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-flash-latest",
+    "gemini-2.0-flash-lite",
+    "gemini-2.0-flash",
+]
+GEMINI_MODEL = PREFERRED_MODELS[0]
 API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
 SYSTEM_TEMPLATE = """You are an expert at writing VIDEO-generation prompts (for tools like Google Veo) for faceless narrated videos.
@@ -28,6 +37,13 @@ For EACH scene, write ONE concise English video prompt that:
 Return ONLY a JSON array of strings: exactly one prompt per scene, in the SAME ORDER as given. No commentary, no extra keys."""
 
 
+class GeminiError(Exception):
+    def __init__(self, code, detail=""):
+        self.code = code
+        self.detail = detail
+        super().__init__(f"HTTP {code}: {detail[:200]}")
+
+
 def _call(api_key, model, system, user, timeout=120):
     url = f"{API_BASE}/{model}:generateContent?key={api_key}"
     body = {
@@ -42,30 +58,55 @@ def _call(api_key, model, system, user, timeout=120):
         with urllib.request.urlopen(req, timeout=timeout) as r:
             data = json.loads(r.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
-        detail = e.read().decode("utf-8", "replace")
-        if e.code in (400, 403):
-            raise RuntimeError(f"API key sai hoặc bị từ chối (HTTP {e.code}).")
-        if e.code == 429:
-            raise RuntimeError("Vượt giới hạn miễn phí (HTTP 429). Chờ một lát rồi thử lại.")
-        raise RuntimeError(f"Lỗi HTTP {e.code}: {detail[:200]}")
+        raise GeminiError(e.code, e.read().decode("utf-8", "replace"))
     except urllib.error.URLError as e:
-        raise RuntimeError(f"Không kết nối được Internet/Gemini: {e.reason}")
+        raise GeminiError(0, str(e.reason))
     cands = data.get("candidates", [])
     if not cands:
-        raise RuntimeError("Gemini không trả về kết quả (có thể nội dung bị chặn).")
+        raise GeminiError(599, "Gemini không trả về kết quả (nội dung có thể bị chặn).")
     parts = cands[0].get("content", {}).get("parts", [])
     return "".join(p.get("text", "") for p in parts)
 
 
-def check_connection(api_key, model=GEMINI_MODEL):
-    """Kiểm tra key + kết nối. Trả về (ok: bool, message: str)."""
+def _friendly(err):
+    if isinstance(err, GeminiError):
+        if err.code in (400, 403):
+            return "API key sai hoặc bị từ chối (kiểm tra lại key)."
+        if err.code == 429:
+            return ("Hết hạn mức miễn phí của Gemini (HTTP 429) trên mọi model thử được. "
+                    "Chờ ít phút rồi thử lại, hoặc bật billing trong Google AI Studio.")
+        if err.code == 404:
+            return "Không tìm thấy model hợp lệ cho key này."
+        if err.code == 0:
+            return f"Không kết nối được Internet/Gemini: {err.detail}"
+        return f"Lỗi Gemini: {err.detail[:200]}"
+    return str(err)
+
+
+def find_working_model(api_key, models=None):
+    """Trả về model đầu tiên còn dùng được, hoặc raise GeminiError."""
+    last = None
+    for m in (models or PREFERRED_MODELS):
+        try:
+            _call(api_key, m, "Reply with the single word OK.", "Say OK", timeout=30)
+            return m
+        except GeminiError as e:
+            last = e
+            if e.code in (404, 429):
+                continue
+            raise
+    raise last or GeminiError(0, "no model")
+
+
+def check_connection(api_key, model=None):
+    """Trả về (ok: bool, message: str, model: str|None)."""
     if not api_key or not api_key.strip():
-        return False, "Chưa nhập API key."
+        return False, "Chưa nhập API key.", None
     try:
-        _call(api_key.strip(), model, "Reply with the single word OK.", "Say OK", timeout=30)
-        return True, "Kết nối Gemini THÀNH CÔNG ✓"
+        m = find_working_model(api_key.strip())
+        return True, f"Kết nối Gemini THÀNH CÔNG ✓ (model: {m})", m
     except Exception as e:  # noqa
-        return False, str(e)
+        return False, _friendly(e), None
 
 
 def _parse_array(txt, expected):
@@ -90,12 +131,12 @@ def _parse_array(txt, expected):
     return lines[:expected]
 
 
-def generate_prompts(scenes_text, style, api_key, model=GEMINI_MODEL,
+def generate_prompts(scenes_text, style, api_key, model=None,
                      batch=20, progress=None):
     """
-    scenes_text : list[str] — lời nói (narration) của từng cảnh, theo thứ tự.
+    scenes_text : list[str] — lời nói của từng cảnh, theo thứ tự.
     style       : str       — Visual Style Profile của kênh.
-    Trả về list[str] prompt, cùng độ dài với scenes_text.
+    Trả về list[str] prompt, cùng độ dài scenes_text. Tự đổi model nếu 429/404.
     """
     if not api_key or not api_key.strip():
         raise RuntimeError("Chưa nhập API key (vào tab Cài đặt).")
@@ -104,14 +145,32 @@ def generate_prompts(scenes_text, style, api_key, model=GEMINI_MODEL,
 
     api_key = api_key.strip()
     system = SYSTEM_TEMPLATE.format(style=style.strip())
+    order = ([model] if model else []) + [m for m in PREFERRED_MODELS if m != model]
+    chosen = None
     out = []
     n = len(scenes_text)
+
     for start in range(0, n, batch):
         chunk = scenes_text[start:start + batch]
         listing = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(chunk))
         user = (f"Here are {len(chunk)} scenes. Write one video prompt for each, "
                 f"returning a JSON array of exactly {len(chunk)} strings, in order.\n\n{listing}")
-        txt = _call(api_key, model, system, user)
+
+        models_try = ([chosen] if chosen else []) + [m for m in order if m != chosen]
+        txt, last = None, None
+        for m in models_try:
+            try:
+                txt = _call(api_key, m, system, user)
+                chosen = m
+                break
+            except GeminiError as e:
+                last = e
+                if e.code in (404, 429):
+                    continue
+                raise RuntimeError(_friendly(e))
+        if txt is None:
+            raise RuntimeError(_friendly(last))
+
         out.extend(_parse_array(txt, len(chunk)))
         if progress:
             progress(min(start + batch, n), n)
