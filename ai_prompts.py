@@ -14,10 +14,10 @@ import urllib.error
 
 # Thứ tự ưu tiên model (cái nào còn free + chạy được thì dùng)
 PREFERRED_MODELS = [
-    "gemini-2.5-flash",
+    "gemini-3.5-flash",      # mới nhất, chất lượng cao nhất (vẫn free tier)
+    "gemini-2.5-flash",      # dự phòng nếu 3.5 hết quota
     "gemini-flash-latest",
     "gemini-2.0-flash-lite",
-    "gemini-2.0-flash",
 ]
 GEMINI_MODEL = PREFERRED_MODELS[0]
 API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"

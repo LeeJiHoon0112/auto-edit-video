@@ -34,7 +34,7 @@ DEFAULT_STYLE = (
 def default_config():
     return {
         "gemini_key": "",
-        "model": "gemini-2.5-flash",
+        "model": "gemini-3.5-flash",
         "profiles": {"Người que": DEFAULT_STYLE},
         "active_profile": "Người que",
     }
