@@ -1,0 +1,42 @@
+# ===== Python =====
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# ===== Nguyên liệu & sản phẩm (KHÔNG đưa media lên repo) =====
+input/
+output/
+demo/
+*.mp4
+*.mov
+*.mkv
+*.webm
+*.wav
+*.mp3
+*.m4a
+*.aac
+*.png
+*.jpg
+*.jpeg
+
+# ===== Dữ liệu của từng video cụ thể =====
+scenes*.csv
+veo_prompts*.txt
+
+# ===== Lối tắt / file tạm =====
+*.lnk
+test8.mp4
+test_av.mp4
+_*.mp4
+
+# ===== BẢO MẬT — KHÔNG BAO GIỜ commit =====
+*token*
+*Token*
+*.env
+.env
+secrets*
+*.key
+*.pem
+config.local.*

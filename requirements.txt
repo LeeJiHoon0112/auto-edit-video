@@ -1,0 +1,13 @@
+# Auto Edit Video — phụ thuộc
+#
+# Tool hiện CHỈ dùng thư viện chuẩn của Python 3 + FFmpeg (cài riêng ngoài hệ thống).
+# Không cần cài package pip nào để chạy phần render video.
+#
+# YÊU CẦU:
+#   - Python 3.9+      : https://www.python.org/downloads/
+#   - FFmpeg (+ffprobe): https://ffmpeg.org/  (Windows: winget install Gyan.FFmpeg)
+#
+# (Giai đoạn sau — khi thêm tính năng "AI tự viết prompt" — sẽ bổ sung tại đây, ví dụ:
+#   google-generativeai
+#   openai
+#   anthropic )
