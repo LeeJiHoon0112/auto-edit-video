@@ -81,10 +81,11 @@ FFPROBE = find_tool("ffprobe")
 
 
 def run(cmd, cwd=None):
-    """Chạy lệnh, in lỗi gọn nếu fail."""
+    """Chạy lệnh, in lỗi gọn nếu fail. Ẩn cửa sổ console FFmpeg trên Windows."""
+    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     res = subprocess.run(cmd, cwd=cwd, stdout=subprocess.PIPE,
                          stderr=subprocess.PIPE, text=True, encoding="utf-8",
-                         errors="replace")
+                         errors="replace", creationflags=flags)
     if res.returncode != 0:
         sys.stderr.write("\n[FFmpeg lỗi]\n" + (res.stderr or "")[-1500:] + "\n")
         raise SystemExit(f"Lệnh thất bại: {' '.join(cmd[:3])} ...")
