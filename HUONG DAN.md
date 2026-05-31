@@ -48,6 +48,23 @@ Bấm đúp **`run.bat`** → cửa sổ app hiện ra.
 
 ---
 
+## 🤖 Để AI tự viết prompt (Gemini — miễn phí)
+
+Nếu bạn dùng tool video AI (Veo...) và muốn tool **tự viết prompt** thay vì viết tay:
+
+**Cài 1 lần — vào tab `⚙️ Cài đặt`:**
+1. Lấy API key MIỄN PHÍ tại https://aistudio.google.com → "Get API key" → copy.
+2. Dán vào ô **API Key** → bấm **💾 Lưu key** → bấm **🔌 Kiểm tra kết nối** (phải báo THÀNH CÔNG).
+3. Ở khung **Style Visual Profile**: bấm ➕ Thêm, đặt tên kênh, dán mô tả phong cách hình ảnh của kênh bạn → 💾 Lưu profile.
+
+**Mỗi video — tab `🎬 Làm video`:**
+1. Chọn **File SRT** + chọn **Style Profile** (vừa lưu).
+2. Bấm **🤖 TẠO PROMPT (AI)** → chờ chút → ra file `veo_prompts.txt` (mỗi dòng 1 prompt).
+3. Mở `veo_prompts.txt`, copy từng prompt sang Veo để tạo clip → đặt tên `01, 02...` bỏ vào thư mục ảnh/clip.
+4. Bấm **▶ RENDER VIDEO**.
+
+> 💡 Mỗi người tự dùng API key của mình. Gemini có bản miễn phí, đủ dùng cho việc này.
+
 ## 🔄 Cập nhật tool (khi có bản mới)
 Chỉ cần bấm đúp **`update.bat`** → tự tải bản mới nhất về. Không cần tải lại từ đầu.
 
