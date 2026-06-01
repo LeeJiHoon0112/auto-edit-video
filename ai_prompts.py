@@ -9,6 +9,7 @@ Lấy API key miễn phí tại: https://aistudio.google.com  (Get API key)
 Tự động chọn model còn hạn mức: nếu model đầu bị 429/404 sẽ thử model kế tiếp.
 """
 import json
+import time
 import urllib.request
 import urllib.error
 
@@ -34,6 +35,7 @@ For EACH scene, write ONE concise English video prompt that:
 ---
 - Is concise and iconic (about 1-2 sentences), written in English.
 - Do NOT begin the prompt with a scene-mode or era label (e.g. "MODERN:", "PREHISTORIC DAY:", "Concept mode:"); write the visual description directly.
+- If the VISUAL STYLE PROFILE is given as JSON containing "scene_modes", choose the scene_mode whose "when" matches this scene's era/topic and apply its background, palette and lighting; keep "art_style", "characters" and "line_work" consistent across every scene.
 
 Return ONLY a JSON array of strings: exactly one prompt per scene, in the SAME ORDER as given. No commentary, no extra keys."""
 
@@ -49,6 +51,7 @@ For EACH scene, write ONE concise English image prompt that:
 ---
 - Is concise and iconic (about 1-2 sentences), written in English.
 - Do NOT begin the prompt with a scene-mode or era label (e.g. "MODERN:", "PREHISTORIC DAY:", "Concept mode:"); write the visual description directly.
+- If the VISUAL STYLE PROFILE is given as JSON containing "scene_modes", choose the scene_mode whose "when" matches this scene's era/topic and apply its background, palette and lighting; keep "art_style", "characters" and "line_work" consistent across every scene.
 
 Return ONLY a JSON array of strings: exactly one prompt per scene, in the SAME ORDER as given. No commentary, no extra keys."""
 
@@ -112,6 +115,9 @@ def _friendly(err):
         if err.code == 429:
             return ("Hết hạn mức miễn phí của Gemini (HTTP 429) trên mọi model thử được. "
                     "Chờ ít phút rồi thử lại, hoặc bật billing trong Google AI Studio.")
+        if err.code in (500, 503):
+            return ("Gemini đang quá tải tạm thời (HTTP %d). Đã tự thử lại vài lần không được. "
+                    "Chờ một lát rồi bấm lại." % err.code)
         if err.code == 404:
             return "Không tìm thấy model hợp lệ cho key này."
         if err.code == 0:
@@ -129,7 +135,7 @@ def find_working_model(api_key, models=None):
             return m
         except GeminiError as e:
             last = e
-            if e.code in (404, 429):
+            if e.code in (404, 429, 500, 503):
                 continue
             raise
     raise last or GeminiError(0, "no model")
@@ -220,18 +226,23 @@ def generate_prompts(scenes_text, style, api_key, model=None,
         user = (f"Here are {len(chunk)} scenes. Write one video prompt for each, "
                 f"returning a JSON array of exactly {len(chunk)} strings, in order.\n\n{listing}")
 
-        models_try = ([chosen] if chosen else []) + [m for m in order if m != chosen]
         txt, last = None, None
-        for m in models_try:
-            try:
-                txt = _call(api_key, m, system, user)
-                chosen = m
+        for attempt in range(4):     # tự thử lại khi lỗi tạm thời (429/500/503)
+            models_try = ([chosen] if chosen else []) + [m for m in order if m != chosen]
+            for m in models_try:
+                try:
+                    txt = _call(api_key, m, system, user)
+                    chosen = m
+                    break
+                except GeminiError as e:
+                    last = e
+                    if e.code in (404, 429, 500, 503):
+                        continue
+                    raise RuntimeError(_friendly(e))
+            if txt is not None:
                 break
-            except GeminiError as e:
-                last = e
-                if e.code in (404, 429):
-                    continue
-                raise RuntimeError(_friendly(e))
+            chosen = None
+            time.sleep(2 * (attempt + 1))    # 2s, 4s, 6s... rồi thử lại
         if txt is None:
             raise RuntimeError(_friendly(last))
 
