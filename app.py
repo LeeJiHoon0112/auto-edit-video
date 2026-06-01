@@ -8,9 +8,11 @@ Auto Edit Video — Giao diện (GUI).
 
 Chạy: double-click run.bat  hoặc  python app.py
 """
+import hashlib
 import json
 import os
 import queue
+import secrets
 import shutil
 import subprocess
 import sys
@@ -21,6 +23,8 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 HERE = os.path.dirname(os.path.abspath(__file__))
 PY = sys.executable
 CONFIG_PATH = os.path.join(HERE, "config.local.json")
+ACCESS_PATH = os.path.join(HERE, "access.json")   # CHỈ chứa mã băm mật khẩu (KHÔNG có API key)
+PBKDF2_ITERS = 200000
 
 DEFAULT_STYLE = (
     "Flat 2D educational illustration. White OR pure black background — never mixed. "
@@ -72,6 +76,63 @@ def save_config(cfg):
             json.dump(cfg, f, ensure_ascii=False, indent=2)
     except Exception as e:  # noqa
         print("Loi luu config:", e)
+
+
+# ----------------------------- Mật khẩu mở app -----------------------------
+def _pw_hash(pw, salt, iters=PBKDF2_ITERS):
+    return hashlib.pbkdf2_hmac("sha256", pw.encode("utf-8"),
+                               bytes.fromhex(salt), iters).hex()
+
+
+def load_access():
+    try:
+        with open(ACCESS_PATH, encoding="utf-8-sig") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def has_password():
+    a = load_access()
+    return bool(a and a.get("hash") and a.get("salt"))
+
+
+def set_password(pw):
+    salt = secrets.token_hex(16)
+    data = {"algo": "pbkdf2_sha256", "iterations": PBKDF2_ITERS,
+            "salt": salt, "hash": _pw_hash(pw, salt)}
+    with open(ACCESS_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+
+
+def clear_password():
+    try:
+        os.remove(ACCESS_PATH)
+    except OSError:
+        pass
+
+
+def verify_password(pw):
+    a = load_access()
+    if not a:
+        return True
+    try:
+        return _pw_hash(pw, a["salt"], a.get("iterations", PBKDF2_ITERS)) == a["hash"]
+    except Exception:
+        return False
+
+
+def password_gate(root):
+    """Hỏi mật khẩu khi mở app. True = đúng/không cần; False = sai/huỷ."""
+    for _ in range(3):
+        pw = simpledialog.askstring("Mật khẩu", "Nhập mật khẩu mở Auto Edit Video:",
+                                    show="*", parent=root)
+        if pw is None:
+            return False                 # bấm Huỷ
+        if verify_password(pw):
+            return True
+        messagebox.showerror("Sai mật khẩu", "Mật khẩu không đúng. Thử lại.")
+    return False
 
 
 def dflt(*parts):
@@ -248,6 +309,22 @@ class App:
             side="left", padx=6)
         self._refresh_models()
         self._update_key_hint()
+
+        # --- Mật khẩu mở app ---
+        fpw = ttk.LabelFrame(parent, text="🔒 Mật khẩu mở app (chặn người ngoài)")
+        fpw.pack(fill="x", padx=8, pady=6)
+        rw = ttk.Frame(fpw)
+        rw.pack(fill="x", padx=8, pady=6)
+        self.pw_status = tk.StringVar()
+        ttk.Label(rw, textvariable=self.pw_status).pack(side="left")
+        ttk.Button(rw, text="🔑 Đặt / Đổi mật khẩu",
+                   command=self._set_app_password).pack(side="right", padx=2)
+        ttk.Button(rw, text="Tắt", command=self._clear_app_password).pack(side="right", padx=2)
+        ttk.Label(fpw, foreground="#888", wraplength=720,
+                  text="Đặt xong nhớ ĐẨY LÊN GITHUB (file access.json — chỉ chứa mã băm, "
+                       "KHÔNG có API key) để bạn bè pull về cũng bị hỏi mật khẩu.").pack(
+            fill="x", padx=10, pady=(0, 4))
+        self._refresh_pw_status()
 
         # --- Style profiles ---
         fp = ttk.LabelFrame(parent, text="Style Visual Profile (cho từng kênh)")
@@ -442,6 +519,33 @@ class App:
             self.q.put(("apiresult", (ok, msg)))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    # ---------- mật khẩu mở app ----------
+    def _refresh_pw_status(self):
+        self.pw_status.set("Đang BẬT — cần mật khẩu để mở ✓" if has_password()
+                           else "Chưa đặt — ai cũng mở được")
+
+    def _set_app_password(self):
+        pw1 = simpledialog.askstring("Đặt mật khẩu", "Mật khẩu mới:",
+                                     show="*", parent=self.root)
+        if not pw1:
+            return
+        pw2 = simpledialog.askstring("Đặt mật khẩu", "Nhập lại mật khẩu:",
+                                     show="*", parent=self.root)
+        if pw1 != pw2:
+            messagebox.showerror("Lỗi", "Hai lần nhập không khớp.")
+            return
+        set_password(pw1)
+        self._refresh_pw_status()
+        messagebox.showinfo("Xong", "Đã đặt mật khẩu mở app.\nNhớ đẩy file access.json "
+                                    "lên GitHub để bạn bè cũng bị hỏi mật khẩu.")
+
+    def _clear_app_password(self):
+        if not has_password():
+            return
+        if messagebox.askyesno("Tắt mật khẩu", "Bỏ mật khẩu mở app?"):
+            clear_password()
+            self._refresh_pw_status()
 
     # ---------- log/queue ----------
     def _busy(self, on):
@@ -744,6 +848,12 @@ class App:
 def main():
     selftest = "--selftest" in sys.argv
     root = tk.Tk()
+    if not selftest and has_password():       # hỏi mật khẩu trước khi vào (nếu đã đặt)
+        root.withdraw()
+        if not password_gate(root):
+            root.destroy()
+            return
+        root.deiconify()
     App(root)
     if selftest:
         root.update()
