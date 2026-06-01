@@ -18,10 +18,15 @@ import urllib.error
 MODELS = {
     "gemini": ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-flash-latest", "gemini-2.0-flash-lite"],
     "openai": ["gpt-4o-mini", "gpt-4.1-mini", "gpt-4o"],
-    "claude": ["claude-3-5-haiku-latest", "claude-3-5-sonnet-latest"],
+    "claude": ["claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-8"],
 }
 PROVIDERS = list(MODELS.keys())
 PROVIDER_LABEL = {"gemini": "Google Gemini", "openai": "OpenAI", "claude": "Anthropic Claude"}
+
+# Số cảnh gửi mỗi lượt (batch). Claude/OpenAI tuân thủ JSON ổn định -> gửi nhiều để
+# bớt lặp lại system prompt (tiết kiệm token input). Gemini hay lỗi JSON khi batch lớn
+# -> giữ nhỏ. (đã test thật: Claude 24 cảnh/lượt sạch, không cắt cụt/lệch.)
+DEFAULT_BATCH = {"gemini": 12, "openai": 24, "claude": 24}
 
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 # Tương thích tên cũ
@@ -225,10 +230,10 @@ def check_connection(provider, api_key, model=None):
         return False, _friendly(e), None
     pref = MODELS.get(provider, [])
     avail = set(available)
-    # ưu tiên model trong danh sách; alias '-latest' (Claude) có thể không liệt kê
-    # nhưng vẫn DÙNG được khi gọi -> rơi về model mặc định pref[0].
-    chosen = (next((m for m in pref if m in avail), None)
-              or (pref[0] if pref else (available[0] if available else None)))
+    # Ưu tiên model ĐANG CHỌN (model truyền vào); nếu chưa chọn thì lấy model tốt nhất
+    # theo thứ tự ưu tiên. (alias '-latest' của Claude có thể không liệt kê nhưng vẫn gọi được)
+    chosen = model or (next((m for m in pref if m in avail), None)
+                       or (pref[0] if pref else (available[0] if available else None)))
     if chosen:
         label = PROVIDER_LABEL.get(provider, provider)
         return True, f"Kết nối {label} THÀNH CÔNG ✓ (model: {chosen})", chosen
@@ -340,6 +345,18 @@ def _style_caption(style):
     return (cap + ".") if cap else ""
 
 
+def _style_for_ai(style):
+    """Style RÚT GỌN gửi cho AI ở chế độ SPLIT: BỎ các field ART-STYLE mà AI bị CẤM
+    mô tả (art_style / line_work / shading_lighting) -> tiết kiệm token input, không
+    mất gì (art-style do TOOL ghép caption / Lock lo). Giữ scene_modes (màu/era),
+    characters, variety, mood. Profile text thuần -> giữ nguyên."""
+    d = _as_json(style)
+    if d is None:
+        return (style or "").strip()
+    keep = {k: d[k] for k in ("scene_modes", "characters", "variety", "mood") if k in d}
+    return json.dumps(keep, ensure_ascii=False) if keep else (style or "").strip()
+
+
 def _strip_mode_keys(text, keys):
     """Nếu Gemini lỡ in nguyên tên KEY scene_mode (vd 'ancient_day') vào câu thì
     đổi gạch dưới thành khoảng trắng cho đọc được ('ancient day'). Chỉ xử lý key
@@ -351,7 +368,7 @@ def _strip_mode_keys(text, keys):
 
 
 def generate_prompts(scenes_text, style, api_key, model=None,
-                     batch=12, progress=None, mode="video", embed_style=True,
+                     batch=None, progress=None, mode="video", embed_style=True,
                      style_mode=None, provider="gemini"):
     """
     scenes_text : list[str] — lời nói của từng cảnh, theo thứ tự.
@@ -368,6 +385,8 @@ def generate_prompts(scenes_text, style, api_key, model=None,
     """
     if not api_key or not api_key.strip():
         raise RuntimeError("Chưa nhập API key (vào tab Cài đặt).")
+    if batch is None:
+        batch = DEFAULT_BATCH.get(provider, 12)
 
     if style_mode is None:                       # tương thích cách gọi cũ
         style_mode = "in_prompt" if embed_style else "lock_all"
@@ -385,14 +404,14 @@ def generate_prompts(scenes_text, style, api_key, model=None,
         # Lock lo NÉT; Gemini lo NỘI DUNG + MÀU/ERA (KHÔNG ghép caption art-style).
         if has_modes:
             template = SYSTEM_SPLIT_IMAGE if mode == "image" else SYSTEM_SPLIT_VIDEO
-            system = template.format(style=style.strip())
+            system = template.format(style=_style_for_ai(style))
         else:
             system = SYSTEM_CONTENT_IMAGE if mode == "image" else SYSTEM_CONTENT_VIDEO
     else:  # "in_prompt": TOOL tự ghép art-style + Gemini lo nội dung + màu/era -> đồng nhất 100%.
         caption = _style_caption(style)
         if has_modes:
             template = SYSTEM_SPLIT_IMAGE if mode == "image" else SYSTEM_SPLIT_VIDEO
-            system = template.format(style=style.strip())
+            system = template.format(style=_style_for_ai(style))
         else:
             system = SYSTEM_CONTENT_IMAGE if mode == "image" else SYSTEM_CONTENT_VIDEO
     pref = MODELS.get(provider, MODELS["gemini"])

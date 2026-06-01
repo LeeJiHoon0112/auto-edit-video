@@ -223,6 +223,15 @@ class App:
         self.cmb_provider.bind("<<ComboboxSelected>>", self._on_provider_pick)
         self.key_hint = tk.StringVar()
         ttk.Label(rp, textvariable=self.key_hint, foreground="#888").pack(side="left", padx=8)
+        rm = ttk.Frame(fa)
+        rm.pack(fill="x", padx=8, pady=(0, 2))
+        ttk.Label(rm, text="Model:", width=12).pack(side="left")
+        self.model_var = tk.StringVar()
+        self.cmb_model = ttk.Combobox(rm, textvariable=self.model_var, state="readonly", width=30)
+        self.cmb_model.pack(side="left")
+        self.cmb_model.bind("<<ComboboxSelected>>", self._on_model_pick)
+        ttk.Label(rm, text="(model đầu = rẻ nhất; vd Claude: haiku rẻ / sonnet cao cấp)",
+                  foreground="#888").pack(side="left", padx=8)
         r = ttk.Frame(fa)
         r.pack(fill="x", padx=8, pady=6)
         ttk.Label(r, text="API Key:", width=12).pack(side="left")
@@ -237,6 +246,7 @@ class App:
         ttk.Button(r2, text="💾 Lưu key", command=self._save_key).pack(side="left")
         ttk.Button(r2, text="🔌 Kiểm tra kết nối", command=self.check_api).pack(
             side="left", padx=6)
+        self._refresh_models()
         self._update_key_hint()
 
         # --- Style profiles ---
@@ -378,6 +388,25 @@ class App:
         save_config(self.cfg)
         self.key_var.set(self._provider_key())     # nạp key của nhà cung cấp đã chọn
         self._update_key_hint()
+        self._refresh_models()                     # nạp danh sách model của nhà cung cấp đó
+
+    def _refresh_models(self):
+        import ai_prompts
+        prov = self.provider_var.get()
+        vals = ai_prompts.MODELS.get(prov, [])
+        self.cmb_model["values"] = vals
+        cur = self.cfg.get("models", {}).get(prov)
+        if cur not in vals:                       # model cũ/không hợp lệ -> về mặc định
+            cur = vals[0] if vals else ""
+            if cur:
+                self.cfg.setdefault("models", {})[prov] = cur
+                save_config(self.cfg)
+        self.model_var.set(cur)
+
+    def _on_model_pick(self, _e=None):
+        self.cfg.setdefault("models", {})[self.provider_var.get()] = self.model_var.get()
+        save_config(self.cfg)
+        self.status.set(f"Đã chọn model: {self.model_var.get()}")
 
     def _save_key(self):
         self.cfg.setdefault("keys", {})[self.provider_var.get()] = self.key_var.get().strip()
@@ -404,7 +433,8 @@ class App:
                 import ai_prompts
                 ok, msg, model = ai_prompts.check_connection(
                     prov, key, self.cfg.get("models", {}).get(prov))
-                if ok and model:
+                # chỉ tự đặt model khi user CHƯA chọn (tôn trọng lựa chọn tay)
+                if ok and model and not self.cfg.get("models", {}).get(prov):
                     self.cfg.setdefault("models", {})[prov] = model
                     save_config(self.cfg)
             except Exception as e:  # noqa
