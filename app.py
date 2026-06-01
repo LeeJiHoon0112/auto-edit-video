@@ -11,6 +11,7 @@ Chạy: double-click run.bat  hoặc  python app.py
 import json
 import os
 import queue
+import shutil
 import subprocess
 import sys
 import threading
@@ -33,12 +34,14 @@ DEFAULT_STYLE = (
 
 def default_config():
     return {
-        "gemini_key": "",
-        "model": "gemini-3.5-flash",
+        "provider": "gemini",                       # gemini | openai | claude
+        "keys": {"gemini": "", "openai": "", "claude": ""},
+        "models": {},                               # model đang dùng theo provider
         "profiles": {"Người que": DEFAULT_STYLE},
         "active_profile": "Người que",
         "prompt_mode": "video",
-        "tool_style": False,
+        "style_mode": "in_prompt",
+        "queue": [],
     }
 
 
@@ -48,6 +51,14 @@ def load_config():
         with open(CONFIG_PATH, encoding="utf-8-sig") as f:
             data = json.load(f)
         cfg.update({k: data[k] for k in cfg if k in data})
+        # Di trú ô tick cũ "tool_style" -> "style_mode"
+        if "style_mode" not in data and "tool_style" in data:
+            cfg["style_mode"] = "lock_all" if data.get("tool_style") else "in_prompt"
+        # Di trú key/model Gemini cũ -> cấu trúc đa nhà cung cấp
+        if not cfg["keys"].get("gemini") and data.get("gemini_key"):
+            cfg["keys"]["gemini"] = data["gemini_key"]
+        if not cfg["models"].get("gemini") and data.get("model"):
+            cfg["models"]["gemini"] = data["model"]
         if not cfg["profiles"]:
             cfg["profiles"] = {"Người que": DEFAULT_STYLE}
     except Exception:
@@ -79,11 +90,14 @@ class App:
         nb = ttk.Notebook(root)
         nb.pack(fill="both", expand=True, padx=6, pady=6)
         self.tab_make = ttk.Frame(nb)
+        self.tab_queue = ttk.Frame(nb)
         self.tab_set = ttk.Frame(nb)
         nb.add(self.tab_make, text="  🎬 Làm video  ")
+        nb.add(self.tab_queue, text="  📋 Hàng đợi  ")
         nb.add(self.tab_set, text="  ⚙️ Cài đặt  ")
 
         self._build_make(self.tab_make)
+        self._build_queue(self.tab_queue)
         self._build_settings(self.tab_set)
 
         # Log + status (dùng chung)
@@ -158,13 +172,21 @@ class App:
         ttk.Radiobutton(line2, text="🖼️ Ảnh tĩnh", variable=self.prompt_mode,
                         value="image", command=self._save_mode).pack(side="left", padx=8)
 
-        line3 = ttk.Frame(f2)
-        line3.pack(fill="x", padx=10, pady=(0, 6))
-        self.tool_style = tk.BooleanVar(value=self.cfg.get("tool_style", False))
-        ttk.Checkbutton(
-            line3, variable=self.tool_style, command=self._save_toolstyle,
-            text="🔒 Style nằm trong tool video — Gemini chỉ viết nội dung "
-                 "(BẬT khi tool video có Style Lock)").pack(side="left")
+        fstyle = ttk.LabelFrame(f2, text="Áp STYLE ở đâu? (chỉ 1 nơi — tránh chọi style)")
+        fstyle.pack(fill="x", padx=10, pady=(0, 6))
+        self.style_mode = tk.StringVar(value=self.cfg.get("style_mode", "in_prompt"))
+        ttk.Radiobutton(
+            fstyle, variable=self.style_mode, value="in_prompt", command=self._save_stylemode,
+            text="①  Trong prompt — Gemini kèm style  (TẮT Style Lock ở tool video)"
+        ).pack(anchor="w", padx=8, pady=1)
+        ttk.Radiobutton(
+            fstyle, variable=self.style_mode, value="lock_art", command=self._save_stylemode,
+            text="⭐  Lock lo NÉT + Gemini lo MÀU/ERA  (BẬT Style Lock chỉ nét) — khuyên dùng"
+        ).pack(anchor="w", padx=8, pady=1)
+        ttk.Radiobutton(
+            fstyle, variable=self.style_mode, value="lock_all", command=self._save_stylemode,
+            text="②  Lock lo TẤT CẢ style — Gemini chỉ viết nội dung  (BẬT Style Lock đầy đủ)"
+        ).pack(anchor="w", padx=8, pady=1)
 
         # Buttons
         bar = ttk.Frame(parent)
@@ -175,6 +197,8 @@ class App:
         self.btn_render = ttk.Button(bar, text="▶  RENDER VIDEO",
                                      command=self.run_render)
         self.btn_render.pack(side="left", padx=4)
+        ttk.Button(bar, text="➕ Hàng đợi", command=self.add_to_queue).pack(
+            side="left", padx=4)
         ttk.Button(bar, text="📂 Mở thư mục xuất", command=self.open_out).pack(
             side="right", padx=4)
 
@@ -186,13 +210,23 @@ class App:
 
     # ============================ TAB CÀI ĐẶT ============================
     def _build_settings(self, parent):
-        # --- API key ---
-        fa = ttk.LabelFrame(parent, text="Gemini API")
+        # --- Nhà cung cấp AI + API key (mỗi nhà cung cấp 1 key riêng) ---
+        fa = ttk.LabelFrame(parent, text="API viết prompt — chọn nhà cung cấp")
         fa.pack(fill="x", padx=8, pady=6)
+        rp = ttk.Frame(fa)
+        rp.pack(fill="x", padx=8, pady=(6, 2))
+        ttk.Label(rp, text="Nhà cung cấp:", width=12).pack(side="left")
+        self.provider_var = tk.StringVar(value=self.cfg.get("provider", "gemini"))
+        self.cmb_provider = ttk.Combobox(rp, textvariable=self.provider_var, state="readonly",
+                                         width=10, values=["gemini", "openai", "claude"])
+        self.cmb_provider.pack(side="left")
+        self.cmb_provider.bind("<<ComboboxSelected>>", self._on_provider_pick)
+        self.key_hint = tk.StringVar()
+        ttk.Label(rp, textvariable=self.key_hint, foreground="#888").pack(side="left", padx=8)
         r = ttk.Frame(fa)
         r.pack(fill="x", padx=8, pady=6)
-        ttk.Label(r, text="API Key:", width=10).pack(side="left")
-        self.key_var = tk.StringVar(value=self.cfg.get("gemini_key", ""))
+        ttk.Label(r, text="API Key:", width=12).pack(side="left")
+        self.key_var = tk.StringVar(value=self._provider_key())
         self.key_entry = ttk.Entry(r, textvariable=self.key_var, show="*")
         self.key_entry.pack(side="left", fill="x", expand=True)
         self.show_key = tk.BooleanVar(value=False)
@@ -203,8 +237,7 @@ class App:
         ttk.Button(r2, text="💾 Lưu key", command=self._save_key).pack(side="left")
         ttk.Button(r2, text="🔌 Kiểm tra kết nối", command=self.check_api).pack(
             side="left", padx=6)
-        ttk.Label(r2, text="Lấy key MIỄN PHÍ tại aistudio.google.com",
-                  foreground="#888").pack(side="left", padx=8)
+        self._update_key_hint()
 
         # --- Style profiles ---
         fp = ttk.LabelFrame(parent, text="Style Visual Profile (cho từng kênh)")
@@ -331,31 +364,48 @@ class App:
     def _toggle_key(self):
         self.key_entry["show"] = "" if self.show_key.get() else "*"
 
-    def _save_key(self):
-        self.cfg["gemini_key"] = self.key_var.get().strip()
+    def _provider_key(self):
+        return self.cfg.get("keys", {}).get(self.provider_var.get(), "")
+
+    def _update_key_hint(self):
+        hints = {"gemini": "Key tại aistudio.google.com",
+                 "openai": "Key tại platform.openai.com/api-keys",
+                 "claude": "Key tại console.anthropic.com → Get API key"}
+        self.key_hint.set(hints.get(self.provider_var.get(), ""))
+
+    def _on_provider_pick(self, _e=None):
+        self.cfg["provider"] = self.provider_var.get()
         save_config(self.cfg)
-        self.status.set("Đã lưu API key.")
+        self.key_var.set(self._provider_key())     # nạp key của nhà cung cấp đã chọn
+        self._update_key_hint()
+
+    def _save_key(self):
+        self.cfg.setdefault("keys", {})[self.provider_var.get()] = self.key_var.get().strip()
+        save_config(self.cfg)
+        self.status.set(f"Đã lưu API key ({self.provider_var.get()}).")
 
     def _save_mode(self):
         self.cfg["prompt_mode"] = self.prompt_mode.get()
         save_config(self.cfg)
 
-    def _save_toolstyle(self):
-        self.cfg["tool_style"] = self.tool_style.get()
+    def _save_stylemode(self):
+        self.cfg["style_mode"] = self.style_mode.get()
         save_config(self.cfg)
 
     def check_api(self):
         self._save_key()
-        key = self.cfg["gemini_key"]
-        self.status.set("Đang kiểm tra kết nối Gemini...")
-        self._log("• Kiểm tra kết nối Gemini...\n")
+        prov = self.provider_var.get()
+        key = self.cfg.get("keys", {}).get(prov, "")
+        self.status.set(f"Đang kiểm tra kết nối {prov}...")
+        self._log(f"• Kiểm tra kết nối {prov}...\n")
 
         def worker():
             try:
                 import ai_prompts
-                ok, msg, model = ai_prompts.check_connection(key, self.cfg.get("model"))
+                ok, msg, model = ai_prompts.check_connection(
+                    prov, key, self.cfg.get("models", {}).get(prov))
                 if ok and model:
-                    self.cfg["model"] = model
+                    self.cfg.setdefault("models", {})[prov] = model
                     save_config(self.cfg)
             except Exception as e:  # noqa
                 ok, msg = False, str(e)
@@ -368,6 +418,8 @@ class App:
         st = "disabled" if on else "normal"
         self.btn_prompt["state"] = st
         self.btn_render["state"] = st
+        if hasattr(self, "btn_render_queue"):
+            self.btn_render_queue["state"] = st
 
     def _log(self, txt):
         self.log.insert("end", txt)
@@ -384,7 +436,7 @@ class App:
                     self._log(("✓ " if ok else "✗ ") + msg + "\n")
                     self.status.set(msg)
                     (messagebox.showinfo if ok else messagebox.showerror)(
-                        "Kiểm tra Gemini", msg)
+                        "Kiểm tra kết nối", msg)
                 elif kind == "done":
                     self._busy(False)
                     self.status.set(data)
@@ -404,16 +456,17 @@ class App:
             return
         name = self.profile_var.get()
         style = self.cfg["profiles"].get(name, "")
-        key = self.cfg.get("gemini_key", "")
-        embed = not self.tool_style.get()
+        prov = self.cfg.get("provider", "gemini")
+        key = self.cfg.get("keys", {}).get(prov, "")
+        smode = self.style_mode.get()
         if not key.strip():
             messagebox.showwarning("Thiếu API key",
-                                   "Vào tab Cài đặt nhập Gemini API key trước nhé.")
+                                   f"Vào tab Cài đặt nhập API key cho '{prov}' trước nhé.")
             return
-        if embed and not style.strip():
+        if smode != "lock_all" and not style.strip():
             messagebox.showwarning("Thiếu style",
                                    "Style profile đang trống. Vào tab Cài đặt để dán nội dung, "
-                                   "hoặc tick 'Style nằm trong tool video'.")
+                                   "hoặc chọn chế độ '② Lock lo TẤT CẢ style'.")
             return
         try:
             target = float(self.secs.get())
@@ -435,16 +488,18 @@ class App:
                 texts = [" ".join(t.strip() for t in s["texts"]).strip() for s in scenes]
                 mode = self.prompt_mode.get()
                 loai = "ẢNH tĩnh" if mode == "image" else "VIDEO"
-                kieu = "kèm style" if embed else "chỉ nội dung (style ở tool)"
+                kieu = {"in_prompt": "kèm style trong prompt",
+                        "lock_art": "Lock nét + AI lo màu/era",
+                        "lock_all": "chỉ nội dung (Lock lo style)"}.get(smode, smode)
                 self.q.put(("line", f"• {len(segs)} đoạn → {len(scenes)} cảnh. "
-                                    f"Gọi Gemini viết prompt {loai} [{kieu}]...\n"))
+                                    f"Gọi {prov} viết prompt {loai} [{kieu}]...\n"))
 
                 def prog(done, total):
                     self.q.put(("line", f"   ...đã viết {done}/{total} prompt\n"))
 
                 prompts = ai_prompts.generate_prompts(
-                    texts, style, key, model=self.cfg.get("model"),
-                    progress=prog, mode=mode, embed_style=embed)
+                    texts, style, key, model=self.cfg.get("models", {}).get(prov),
+                    progress=prog, mode=mode, style_mode=smode, provider=prov)
 
                 # Ghi veo_prompts.txt
                 vp = dflt("veo_prompts.txt")
@@ -481,22 +536,11 @@ class App:
         if not os.path.isdir(self.images.get()):
             messagebox.showwarning("Thiếu", "Chưa chọn thư mục ảnh/clip.")
             return
-        scenes_csv = dflt("scenes.csv")
-        cmd = [PY, dflt("auto_edit.py"),
-               "--images", self.images.get(), "--srt", self.srt.get(),
-               "--out", self.out.get()]
-        if self.voice.get().strip():
-            cmd += ["--voice", self.voice.get()]
-        if os.path.isfile(scenes_csv):
-            cmd += ["--scenes", scenes_csv]
-        else:
-            cmd += ["--seconds-per-image", self.secs.get()]
-        if not self.kenburns.get():
-            cmd += ["--no-kenburns"]
-        if not self.subs.get():
-            cmd += ["--no-subtitles"]
-        if self.crossfade.get():
-            cmd += ["--transition", "fade"]
+        job = self._current_job()
+        sc = dflt("scenes.csv")
+        if os.path.isfile(sc):
+            job["scenes"] = sc
+        cmd = self._job_cmd(job)
 
         self.log.delete("1.0", "end")
         self._log("$ render...\n\n")
@@ -520,6 +564,149 @@ class App:
                     self.q.put(("done", f"Render thất bại (mã {p.returncode}). Xem nhật ký."))
             except Exception as e:  # noqa
                 self.q.put(("done", f"Lỗi: {e}"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    # ============================ HÀNG ĐỢI ============================
+    def _current_job(self):
+        """Gói nguyên liệu đang chọn ở tab Làm video thành 1 'job' để render."""
+        return {
+            "out": self.out.get(), "srt": self.srt.get(),
+            "images": self.images.get(), "voice": self.voice.get(),
+            "scenes": "", "secs": self.secs.get(),
+            "kenburns": self.kenburns.get(), "subs": self.subs.get(),
+            "crossfade": self.crossfade.get(),
+        }
+
+    def _job_cmd(self, job):
+        """Dựng lệnh gọi auto_edit.py cho 1 job (dùng chung render đơn + hàng đợi)."""
+        cmd = [PY, dflt("auto_edit.py"),
+               "--images", job["images"], "--srt", job["srt"], "--out", job["out"]]
+        if (job.get("voice") or "").strip():
+            cmd += ["--voice", job["voice"]]
+        if job.get("scenes") and os.path.isfile(job["scenes"]):
+            cmd += ["--scenes", job["scenes"]]
+        else:
+            cmd += ["--seconds-per-image", str(job.get("secs", "8"))]
+        if not job.get("kenburns", True):
+            cmd += ["--no-kenburns"]
+        if not job.get("subs", True):
+            cmd += ["--no-subtitles"]
+        if job.get("crossfade", False):
+            cmd += ["--transition", "fade"]
+        return cmd
+
+    def add_to_queue(self):
+        if not os.path.isfile(self.srt.get()):
+            messagebox.showwarning("Thiếu", "Chưa chọn file SRT hợp lệ.")
+            return
+        if not os.path.isdir(self.images.get()):
+            messagebox.showwarning("Thiếu", "Chưa chọn thư mục ảnh/clip.")
+            return
+        job = self._current_job()
+        # Lưu BẢN SAO scenes.csv hiện tại (nếu có) -> tránh bị ghi đè khi tạo prompt video khác
+        sc = dflt("scenes.csv")
+        if os.path.isfile(sc):
+            qdir = dflt("queue")
+            os.makedirs(qdir, exist_ok=True)
+            base = os.path.splitext(os.path.basename(job["out"]))[0] or "job"
+            dst = os.path.join(qdir, f"scenes_{len(self.cfg.get('queue', []))+1}_{base}.csv")
+            try:
+                shutil.copyfile(sc, dst)
+                job["scenes"] = dst
+            except Exception:  # noqa
+                pass
+        self.cfg.setdefault("queue", []).append(job)
+        save_config(self.cfg)
+        self._refresh_queue()
+        self.status.set(f"Đã thêm vào hàng đợi ({len(self.cfg['queue'])} video).")
+
+    def _build_queue(self, parent):
+        top = ttk.Frame(parent)
+        top.pack(fill="x", padx=10, pady=(8, 2))
+        self.q_count = tk.StringVar(value="0 video trong hàng đợi")
+        ttk.Label(top, textvariable=self.q_count, font=("", 10, "bold")).pack(side="left")
+        ttk.Label(parent, wraplength=720, foreground="#777",
+                  text="Mẹo: ở tab '🎬 Làm video' set SRT + thư mục clip + voice + tên file ra, "
+                       "rồi bấm '➕ Hàng đợi'. Mỗi video nên để clip ở THƯ MỤC RIÊNG và đặt "
+                       "TÊN FILE RA khác nhau (tránh ghi đè).").pack(fill="x", padx=10, pady=(0, 4))
+        mid = ttk.Frame(parent)
+        mid.pack(fill="both", expand=True, padx=10, pady=4)
+        self.qlist = tk.Listbox(mid, height=10)
+        self.qlist.pack(side="left", fill="both", expand=True)
+        sb = ttk.Scrollbar(mid, command=self.qlist.yview)
+        sb.pack(side="right", fill="y")
+        self.qlist["yscrollcommand"] = sb.set
+        bar = ttk.Frame(parent)
+        bar.pack(fill="x", padx=10, pady=6)
+        ttk.Button(bar, text="🗑 Xoá mục chọn", command=self._queue_del).pack(side="left", padx=2)
+        ttk.Button(bar, text="🧹 Xoá hết", command=self._queue_clear).pack(side="left", padx=2)
+        self.btn_render_queue = ttk.Button(bar, text="▶  RENDER CẢ HÀNG ĐỢI",
+                                           command=self.run_render_queue)
+        self.btn_render_queue.pack(side="right", padx=4)
+        self._refresh_queue()
+
+    def _refresh_queue(self):
+        self.qlist.delete(0, "end")
+        for i, j in enumerate(self.cfg.get("queue", []), 1):
+            out = os.path.basename(j.get("out", "?"))
+            srt = os.path.basename(j.get("srt", "?"))
+            imgs = os.path.basename((j.get("images", "?") or "").rstrip("/\\"))
+            self.qlist.insert("end", f"{i}.  {out}   ←  {srt}   |  clip: {imgs}")
+        n = len(self.cfg.get("queue", []))
+        self.q_count.set(f"{n} video trong hàng đợi")
+
+    def _queue_del(self):
+        sel = self.qlist.curselection()
+        if not sel:
+            return
+        self.cfg.get("queue", []).pop(sel[0])
+        save_config(self.cfg)
+        self._refresh_queue()
+
+    def _queue_clear(self):
+        if self.cfg.get("queue") and messagebox.askyesno("Xoá hết", "Xoá toàn bộ hàng đợi?"):
+            self.cfg["queue"] = []
+            save_config(self.cfg)
+            self._refresh_queue()
+
+    def run_render_queue(self):
+        jobs = list(self.cfg.get("queue", []))
+        if not jobs:
+            messagebox.showinfo("Hàng đợi trống", "Chưa có video nào trong hàng đợi.")
+            return
+        self.log.delete("1.0", "end")
+        self._busy(True)
+        self.status.set(f"Đang render hàng đợi (0/{len(jobs)})...")
+
+        def worker():
+            ok_count, fail = 0, []
+            env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+            flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+            for idx, job in enumerate(jobs, 1):
+                name = os.path.basename(job.get("out", "?"))
+                self.q.put(("line", f"\n===== VIDEO {idx}/{len(jobs)}: {name} =====\n"))
+                try:
+                    p = subprocess.Popen(self._job_cmd(job), cwd=HERE,
+                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                         text=True, encoding="utf-8", errors="replace",
+                                         env=env, creationflags=flags)
+                    for line in p.stdout:
+                        self.q.put(("line", line))
+                    p.wait()
+                    if p.returncode == 0:
+                        ok_count += 1
+                        self.q.put(("line", f"✅ Xong: {job.get('out')}\n"))
+                    else:
+                        fail.append(name)
+                        self.q.put(("line", f"❌ Lỗi (mã {p.returncode}): {name}\n"))
+                except Exception as e:  # noqa
+                    fail.append(name)
+                    self.q.put(("line", f"❌ Lỗi: {e}\n"))
+            msg = f"✅ Hàng đợi xong: {ok_count}/{len(jobs)} video"
+            if fail:
+                msg += f" ({len(fail)} lỗi: {', '.join(fail)})"
+            self.q.put(("done", msg))
 
         threading.Thread(target=worker, daemon=True).start()
 

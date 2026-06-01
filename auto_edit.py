@@ -41,6 +41,7 @@ HEIGHT = 1080
 FPS = 30
 FADE = 0.4               # thời gian fade in/out mỗi cảnh (giây)
 KENBURNS_AMOUNT = 0.16   # mức zoom Ken Burns (0.16 = phóng to thêm 16%)
+KENBURNS_SS = 1.5        # phóng to nội bộ khử rung zoompan rồi thu về 1080p (1.0=tắt, 2.0=mượt nhất/chậm)
 IMG_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".webm")
 AUDIO_NAMES = ("voice.mp3", "voice.wav", "voice.m4a", "voiceover.mp3", "voiceover.wav")
@@ -217,8 +218,12 @@ def build_clip(media, duration, out_path, kenburns=True, index=0, clip_fit="auto
         amt = KENBURNS_AMOUNT
         zmax = 1.0 + amt
         fr = frames
-        pre = (f"scale={WIDTH*2}:{HEIGHT*2}:force_original_aspect_ratio=increase,"
-               f"crop={WIDTH*2}:{HEIGHT*2}")
+        # Chống RUNG của zoompan: render Ken Burns ở khung phóng to (KENBURNS_SS lần)
+        # rồi THU về 1080p (lanczos). Làm tròn pixel ở độ phân giải cao -> "mịn dưới
+        # pixel" khi co lại -> zoom/pan hết giật. File xuất ra VẪN là 1080p.
+        zw, zh = int(WIDTH * KENBURNS_SS) // 2 * 2, int(HEIGHT * KENBURNS_SS) // 2 * 2
+        pw, ph = zw * 2, zh * 2          # pre-scale = 2x khung zoompan (đủ dư cho zoom)
+        pre = (f"scale={pw}:{ph}:force_original_aspect_ratio=increase,crop={pw}:{ph}")
         cx, cy = "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"
         v = index % 4
         if v == 0:        # zoom in, giữa
@@ -230,7 +235,8 @@ def build_clip(media, duration, out_path, kenburns=True, index=0, clip_fit="auto
         else:             # zoom in + lia phải -> trái
             z, x, y = f"1+{amt}*on/{fr}", f"(iw-iw/zoom)*(1-on/{fr})", cy
         vf = (f"{pre},zoompan=z='{z}':x='{x}':y='{y}':"
-              f"d={fr}:s={WIDTH}x{HEIGHT}:fps={FPS},")
+              f"d={fr}:s={zw}x{zh}:fps={FPS},"
+              f"scale={WIDTH}:{HEIGHT}:flags=lanczos,")
     else:
         vf = (f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase,"
               f"crop={WIDTH}:{HEIGHT},fps={FPS},")
