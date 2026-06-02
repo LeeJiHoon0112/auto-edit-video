@@ -17,7 +17,7 @@ import urllib.error
 # Model ưu tiên cho từng NHÀ CUNG CẤP (cái ĐẦU = rẻ/tốt mặc định, sau là dự phòng).
 MODELS = {
     "gemini": ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-flash-latest", "gemini-2.0-flash-lite"],
-    "openai": ["gpt-4o-mini", "gpt-4.1-mini", "gpt-4o"],
+    "openai": ["gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.5"],
     "claude": ["claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-8"],
 }
 PROVIDERS = list(MODELS.keys())
@@ -136,11 +136,13 @@ def _call_gemini(api_key, model, system, user, timeout=120):
 
 
 def _call_openai(api_key, model, system, user, timeout=120):
+    # GPT-5.x: dùng 'max_completion_tokens' (KHÔNG dùng 'max_tokens') + KHÔNG gửi
+    # 'temperature' (chỉ nhận mặc định). Để cao đủ chỗ cho reasoning + output.
     body = {
         "model": model,
         "messages": [{"role": "system", "content": system},
                      {"role": "user", "content": user}],
-        "temperature": 0.85, "max_tokens": 8192,
+        "max_completion_tokens": 16000,
     }
     data = _http("https://api.openai.com/v1/chat/completions",
                  {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
