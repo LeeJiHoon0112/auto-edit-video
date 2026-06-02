@@ -221,6 +221,31 @@ def list_models(provider, api_key, timeout=15):
     return []
 
 
+_OPENAI_SKIP = ("embed", "whisper", "tts", "dall", "image", "audio", "realtime",
+                "transcribe", "moderation", "search", "codex", "babbage",
+                "davinci", "instruct", "preview")
+
+
+def list_chat_models(provider, api_key):
+    """Danh sách model CHAT đã LỌC gọn để hiện trong ô Model (bỏ embedding/audio/ảnh/
+    bản gắn ngày...), MỚI lên đầu. Lỗi -> trả []. Dùng cho ô Model TỰ cập nhật theo API."""
+    try:
+        ids = list_models(provider, api_key)
+    except Exception:  # noqa
+        return []
+    if provider == "openai":
+        out = [m for m in ids if m.startswith("gpt-")
+               and not any(s in m for s in _OPENAI_SKIP)
+               and not re.search(r"-\d{4}", m)]        # bỏ bản gắn ngày, giữ alias
+    elif provider == "claude":
+        out = [m for m in ids if m.startswith("claude-")]
+    elif provider == "gemini":
+        out = [m for m in ids if m.startswith("gemini-")]
+    else:
+        out = list(ids)
+    return sorted(set(out), reverse=True)              # model mới (version cao) lên đầu
+
+
 def check_connection(provider, api_key, model=None):
     """Trả về (ok, message, model). Kiểm tra NHANH bằng danh sách model (1 GET) ->
     không tốn quota generate. Chọn model TỐT NHẤT đang có cho nhà cung cấp đó."""

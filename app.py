@@ -44,6 +44,7 @@ def default_config():
         "provider": "gemini",                       # gemini | openai | claude
         "keys": {"gemini": "", "openai": "", "claude": ""},
         "models": {},                               # model đang dùng theo provider
+        "model_cache": {},                          # danh sách model TỰ lấy từ API theo provider
         "profiles": {"Người que": DEFAULT_STYLE},
         "active_profile": "Người que",
         "prompt_mode": "video",
@@ -345,8 +346,9 @@ class App:
         self.cmb_model = ttk.Combobox(rm, textvariable=self.model_var, state="readonly", width=30)
         self.cmb_model.pack(side="left")
         self.cmb_model.bind("<<ComboboxSelected>>", self._on_model_pick)
-        ttk.Label(rm, text="(model đầu = rẻ nhất; vd Claude: haiku rẻ / sonnet cao cấp)",
-                  foreground="#888").pack(side="left", padx=8)
+        ttk.Button(rm, text="🔄", width=3, command=self._fetch_models).pack(side="left", padx=4)
+        ttk.Label(rm, text="(tự cập nhật từ API; model đầu = mặc định rẻ)",
+                  foreground="#888").pack(side="left", padx=6)
         r = ttk.Frame(fa)
         r.pack(fill="x", padx=8, pady=6)
         ttk.Label(r, text="API Key:", width=12).pack(side="left")
@@ -363,6 +365,7 @@ class App:
             side="left", padx=6)
         self._refresh_models()
         self._update_key_hint()
+        self._fetch_models()        # nền: tự cập nhật danh sách model lúc mở (nếu có key)
 
         # --- Mật khẩu mở app ---
         fpw = ttk.LabelFrame(parent, text="🔒 Mật khẩu mở app (chặn người ngoài)")
@@ -526,12 +529,24 @@ class App:
         save_config(self.cfg)
         self.key_var.set(self._provider_key())     # nạp key của nhà cung cấp đã chọn
         self._update_key_hint()
-        self._refresh_models()                     # nạp danh sách model của nhà cung cấp đó
+        self._refresh_models()                     # nạp danh sách model (cache/cứng)
+        self._fetch_models()                       # nền: tự cập nhật từ API
+
+    def _model_options(self, prov):
+        """Danh sách model cho combobox: model TUYỂN CHỌN (mặc định rẻ) lên đầu, rồi
+        các model khác TỰ lấy từ API. Bỏ model tuyển chọn nào không còn tồn tại."""
+        import ai_prompts
+        hard = list(ai_prompts.MODELS.get(prov, []))
+        fetched = self.cfg.get("model_cache", {}).get(prov, [])
+        if not fetched:
+            return hard                            # chưa fetch -> dùng danh sách cứng
+        curated = [m for m in hard if m in fetched]
+        others = [m for m in fetched if m not in curated]
+        return (curated + others) or hard
 
     def _refresh_models(self):
-        import ai_prompts
         prov = self.provider_var.get()
-        vals = ai_prompts.MODELS.get(prov, [])
+        vals = self._model_options(prov)
         self.cmb_model["values"] = vals
         cur = self.cfg.get("models", {}).get(prov)
         if cur not in vals:                       # model cũ/không hợp lệ -> về mặc định
@@ -540,6 +555,24 @@ class App:
                 self.cfg.setdefault("models", {})[prov] = cur
                 save_config(self.cfg)
         self.model_var.set(cur)
+
+    def _fetch_models(self, prov=None):
+        """Lấy danh sách model THẬT từ API (nền) rồi cập nhật combobox + cache config."""
+        prov = prov or self.provider_var.get()
+        key = self.cfg.get("keys", {}).get(prov, "")
+        if not key.strip():
+            return
+
+        def worker():
+            try:
+                import ai_prompts
+                models = ai_prompts.list_chat_models(prov, key)
+            except Exception:  # noqa
+                models = []
+            if models:
+                self.q.put(("models", (prov, models)))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _on_model_pick(self, _e=None):
         self.cfg.setdefault("models", {})[self.provider_var.get()] = self.model_var.get()
@@ -580,6 +613,7 @@ class App:
             self.q.put(("apiresult", (ok, msg)))
 
         threading.Thread(target=worker, daemon=True).start()
+        self._fetch_models(prov)        # tiện thể cập nhật danh sách model từ API
 
     # ---------- mật khẩu mở app ----------
     def _refresh_pw_status(self):
@@ -648,6 +682,13 @@ class App:
                     self.status.set(msg)
                     (messagebox.showinfo if ok else messagebox.showerror)(
                         "Kiểm tra kết nối", msg)
+                elif kind == "models":
+                    prov, models = data
+                    self.cfg.setdefault("model_cache", {})[prov] = models
+                    save_config(self.cfg)
+                    if prov == self.provider_var.get():
+                        self._refresh_models()
+                    self.status.set(f"Đã cập nhật {len(models)} model ({prov}).")
                 elif kind == "done":
                     self._busy(False)
                     self.status.set(data)
