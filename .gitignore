@@ -43,3 +43,6 @@ config.local.*
 
 # Tài liệu handoff nội bộ (chứa đường dẫn cá nhân) — không đưa lên repo public
 Context.md
+
+# Token ghi nhớ đăng nhập (mỗi máy tự lưu, KHÔNG commit)
+session.local.json
