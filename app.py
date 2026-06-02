@@ -48,6 +48,7 @@ def default_config():
         "active_profile": "Người que",
         "prompt_mode": "video",
         "style_mode": "in_prompt",
+        "main_character": "",
         "queue": [],
     }
 
@@ -292,6 +293,15 @@ class App:
             fstyle, variable=self.style_mode, value="lock_all", command=self._save_stylemode,
             text="②  Lock lo TẤT CẢ style — Gemini chỉ viết nội dung  (BẬT Style Lock đầy đủ)"
         ).pack(anchor="w", padx=8, pady=1)
+
+        linec = ttk.Frame(f2)
+        linec.pack(fill="x", padx=10, pady=(2, 6))
+        ttk.Label(linec, text="🎭 Tên nhân vật chính:").pack(side="left")
+        self.main_char = tk.StringVar(value=self.cfg.get("main_character", ""))
+        ttk.Entry(linec, textvariable=self.main_char, width=18).pack(side="left", padx=6)
+        ttk.Label(linec, foreground="#888",
+                  text="(AI sẽ viết tên này vào prompt + tả hành động đa dạng; "
+                       "để TRỐNG nếu video không có nhân vật chính)").pack(side="left")
 
         # Buttons
         bar = ttk.Frame(parent)
@@ -660,6 +670,9 @@ class App:
         prov = self.cfg.get("provider", "gemini")
         key = self.cfg.get("keys", {}).get(prov, "")
         smode = self.style_mode.get()
+        character = self.main_char.get().strip()
+        self.cfg["main_character"] = character
+        save_config(self.cfg)
         if not key.strip():
             messagebox.showwarning("Thiếu API key",
                                    f"Vào tab Cài đặt nhập API key cho '{prov}' trước nhé.")
@@ -700,7 +713,8 @@ class App:
 
                 prompts = ai_prompts.generate_prompts(
                     texts, style, key, model=self.cfg.get("models", {}).get(prov),
-                    progress=prog, mode=mode, style_mode=smode, provider=prov)
+                    progress=prog, mode=mode, style_mode=smode, provider=prov,
+                    character=character)
 
                 # Ghi veo_prompts.txt
                 vp = dflt("veo_prompts.txt")

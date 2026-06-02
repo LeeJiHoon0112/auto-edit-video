@@ -367,9 +367,36 @@ def _strip_mode_keys(text, keys):
     return text
 
 
+def _character_directive(name):
+    """Chỉ thị cho AI khi video có NHÂN VẬT CHÍNH (tool video đã có ảnh tham chiếu).
+    Bắt AI: gọi nhân vật bằng TÊN (để tool áp ảnh ref), KHÔNG tả ngoại hình (ref lo),
+    chỉ tả HÀNH ĐỘNG + BIỂU CẢM + TƯ THẾ + góc máy, và ĐA DẠNG hoá qua các cảnh."""
+    n = name.strip()
+    return (
+        f'MAIN CHARACTER: the recurring main character is named "{n}". In EVERY scene where '
+        f'this character appears, refer to them BY THE NAME "{n}" (e.g. "{n} leans forward and '
+        f'listens") so the tool can apply the reference image. Do NOT describe {n}\'s fixed '
+        f"appearance (face, hair, clothes, body) — a reference image controls that. INSTEAD, "
+        f"for each such scene clearly state {n}'s ACTION, facial EXPRESSION/emotion, body "
+        f"POSE/gesture and camera framing, and VARY them across scenes (avoid repeating the "
+        f"same standing pose or the same expression). Scenes without {n} simply omit the name."
+    )
+
+
+def _inject_character(system, character):
+    """Chèn chỉ thị nhân vật chính vào system prompt (ngay trước dòng yêu cầu JSON)."""
+    if not character or not character.strip():
+        return system
+    block = _character_directive(character)
+    idx = system.rfind("Return ONLY")
+    if idx == -1:
+        return system + "\n\n" + block
+    return system[:idx] + block + "\n\n" + system[idx:]
+
+
 def generate_prompts(scenes_text, style, api_key, model=None,
                      batch=None, progress=None, mode="video", embed_style=True,
-                     style_mode=None, provider="gemini"):
+                     style_mode=None, provider="gemini", character=""):
     """
     scenes_text : list[str] — lời nói của từng cảnh, theo thứ tự.
     style       : str       — Visual Style Profile của kênh.
@@ -414,6 +441,7 @@ def generate_prompts(scenes_text, style, api_key, model=None,
             system = template.format(style=_style_for_ai(style))
         else:
             system = SYSTEM_CONTENT_IMAGE if mode == "image" else SYSTEM_CONTENT_VIDEO
+    system = _inject_character(system, character)   # nếu có nhân vật chính
     pref = MODELS.get(provider, MODELS["gemini"])
     order = ([model] if model else []) + [m for m in pref if m != model]
     chosen = None
