@@ -24,6 +24,8 @@ demo/
 # ===== Dữ liệu của từng video cụ thể =====
 scenes*.csv
 veo_prompts*.txt
+image_prompts*.txt
+motion_prompts*.txt
 
 # ===== Lối tắt / file tạm =====
 *.lnk
