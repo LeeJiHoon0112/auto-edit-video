@@ -47,9 +47,8 @@ def default_config():
         "model_cache": {},                          # danh sách model TỰ lấy từ API theo provider
         "profiles": {"Người que": DEFAULT_STYLE},
         "active_profile": "Người que",
-        "prompt_mode": "video",
+        "produce": "video",                         # image | video | i2v (kiểu sản xuất)
         "style_mode": "in_prompt",
-        "workflow": "t2v",                          # t2v (1 prompt video) | i2v (ảnh + chuyển động)
         "main_character": "",
         "queue": [],
     }
@@ -69,6 +68,12 @@ def load_config():
             cfg["keys"]["gemini"] = data["gemini_key"]
         if not cfg["models"].get("gemini") and data.get("model"):
             cfg["models"]["gemini"] = data["model"]
+        # Di trú "prompt_mode" + "workflow" cũ -> 1 lựa chọn "produce"
+        if "produce" not in data:
+            if data.get("workflow") == "i2v":
+                cfg["produce"] = "i2v"
+            elif data.get("prompt_mode") == "image":
+                cfg["produce"] = "image"
         if not cfg["profiles"]:
             cfg["profiles"] = {"Người que": DEFAULT_STYLE}
     except Exception:
@@ -287,24 +292,21 @@ class App:
         line.pack(fill="x", padx=10, pady=6)
         ttk.Label(line, text="Số giây mỗi cảnh:").pack(side="left")
         ttk.Spinbox(line, from_=2, to=30, width=5, textvariable=self.secs).pack(side="left", padx=6)
-        ttk.Label(line, text="Loại:").pack(side="left", padx=(16, 4))
-        self.prompt_mode = tk.StringVar(value=self.cfg.get("prompt_mode", "video"))
-        ttk.Radiobutton(line, text="🎬 Video", variable=self.prompt_mode,
-                        value="video", command=self._save_mode).pack(side="left", padx=4)
-        ttk.Radiobutton(line, text="🖼️ Ảnh tĩnh", variable=self.prompt_mode,
-                        value="image", command=self._save_mode).pack(side="left", padx=4)
 
-        fw = ttk.LabelFrame(f2, text="Quy trình")
-        fw.pack(fill="x", padx=10, pady=(0, 6))
-        self.workflow = tk.StringVar(value=self.cfg.get("workflow", "t2v"))
+        fp = ttk.LabelFrame(f2, text="Kiểu sản xuất video")
+        fp.pack(fill="x", padx=10, pady=(0, 6))
+        self.produce = tk.StringVar(value=self.cfg.get("produce", "video"))
         ttk.Radiobutton(
-            fw, variable=self.workflow, value="t2v", command=self._save_workflow,
-            text="Text-to-video — 1 prompt video  (video KHÔNG cần nhân vật cố định)"
+            fp, variable=self.produce, value="image", command=self._save_produce,
+            text="🖼️  Ảnh tĩnh + Ken Burns — 1 prompt ẢNH  (kênh ảnh tĩnh, dùng zoom)"
         ).pack(anchor="w", padx=8, pady=1)
         ttk.Radiobutton(
-            fw, variable=self.workflow, value="i2v", command=self._save_workflow,
-            text="⭐ Image-to-video — sinh 2 bộ: prompt ẢNH + prompt CHUYỂN ĐỘNG  "
-                 "(video CÓ nhân vật chính, đồng nhất cao)"
+            fp, variable=self.produce, value="video", command=self._save_produce,
+            text="🎬  Clip video trực tiếp — 1 prompt VIDEO  (Veo text-to-video)"
+        ).pack(anchor="w", padx=8, pady=1)
+        ttk.Radiobutton(
+            fp, variable=self.produce, value="i2v", command=self._save_produce,
+            text="⭐  Clip từ ảnh — 2 prompt: ẢNH + CHUYỂN ĐỘNG  (có nhân vật chính, đồng nhất cao)"
         ).pack(anchor="w", padx=8, pady=1)
 
         fstyle = ttk.LabelFrame(f2, text="Áp STYLE ở đâu? (chỉ 1 nơi — tránh chọi style)")
@@ -332,7 +334,7 @@ class App:
                    command=self._open_prompts).pack(side="left", padx=4)
 
         ttk.Label(parent, wraplength=640, foreground="#555",
-                  text="①  Bấm TẠO PROMPT → ra veo_prompts.txt  →  ②  tạo clip Veo (tên 01,02...) "
+                  text="①  Bấm TẠO PROMPT → ra prompt  →  ②  tạo ảnh/clip (đặt tên 01,02...) "
                        "bỏ vào thư mục clip  →  ③  sang trang 🎬 Render.").pack(
             fill="x", padx=12, pady=(0, 4))
 
@@ -637,16 +639,12 @@ class App:
         save_config(self.cfg)
         self.status.set(f"Đã lưu API key ({self.provider_var.get()}).")
 
-    def _save_mode(self):
-        self.cfg["prompt_mode"] = self.prompt_mode.get()
+    def _save_produce(self):
+        self.cfg["produce"] = self.produce.get()
         save_config(self.cfg)
 
     def _save_stylemode(self):
         self.cfg["style_mode"] = self.style_mode.get()
-        save_config(self.cfg)
-
-    def _save_workflow(self):
-        self.cfg["workflow"] = self.workflow.get()
         save_config(self.cfg)
 
     def check_api(self):
@@ -799,7 +797,7 @@ class App:
                 scenes = bs.group_scenes(segs, target)
                 texts = [" ".join(t.strip() for t in s["texts"]).strip() for s in scenes]
                 import csv
-                wf = self.workflow.get()
+                produce = self.produce.get()
                 model = self.cfg.get("models", {}).get(prov)
 
                 def prog(done, total):
@@ -823,7 +821,7 @@ class App:
                             w.writerow(row)
                     return sc
 
-                if wf == "i2v":
+                if produce == "i2v":
                     self.q.put(("line", f"• {len(segs)} đoạn → {len(scenes)} cảnh. "
                                         f"[Image-to-video] gọi {prov}...\n"))
                     self.q.put(("line", "• (1/2) Viết prompt ẢNH keyframe...\n"))
@@ -843,7 +841,7 @@ class App:
                     self.q.put(("done", f"✅ Xong (Image-to-video)! {len(img_prompts)} cảnh × 2 prompt. "
                                         "Dùng image_prompts.txt tạo keyframe → motion_prompts.txt cho i2v."))
                 else:
-                    mode = self.prompt_mode.get()
+                    mode = "image" if produce == "image" else "video"
                     loai = "ẢNH tĩnh" if mode == "image" else "VIDEO"
                     kieu = {"in_prompt": "kèm style trong prompt",
                             "lock_art": "Lock nét + AI lo màu/era",
