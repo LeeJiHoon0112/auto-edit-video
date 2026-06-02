@@ -46,7 +46,7 @@ For EACH scene, write ONE concise English line that:
 - Visually conveys the MEANING of the narration (not a literal word-for-word transcription).
 - Describes MOTION / action (a short moving clip): use action verbs.
 - Keep each scene to ONE single action/moment; do NOT chain events with "then" / "transitions to" / "followed by" (each clip lasts only a few seconds).
-- Chooses a camera framing (wide / medium / close-up) and varies it across scenes.
+- SHOT VARIETY & VISUAL HOOK: strongly VARY the shot type across scenes — wide establishing, medium, close-up, extreme close-up of eyes/hands/an object, over-the-shoulder, low or high angle, tilted/Dutch angle, framed through a foreground object or doorway, silhouette, reflection, or POV; compose with DEPTH and ONE clear eye-catching focal point. Do NOT repeat the same framing, and avoid a plain centred talking figure. For an ABSTRACT idea (an emotion, a concept, anything with no literal scene), show a striking visual METAPHOR or symbolic image instead of a person standing.
 - COLOUR / ERA: a style profile JSON with "scene_modes" is given below. Pick the scene_mode whose "when" best matches this scene's era/topic and apply ONLY its background, palette and lighting (the colours and setting). You MAY name a character's identifying features (e.g. round glasses, messy brown hair) so the right character appears, but do NOT describe the drawing style itself.
 - NEVER write a scene_mode KEY name (such as "ancient_day", "night", "concept", "modern") in the text; describe the colours in plain words instead.
 - Do NOT begin with a label like "MODERN:".
@@ -64,7 +64,7 @@ You will receive a numbered list of scenes; each scene has the NARRATION spoken 
 For EACH scene, write ONE concise English line that:
 - Visually conveys the MEANING of the narration (not a literal word-for-word transcription).
 - Describes a SINGLE STILL moment (subject, setting, framing). Do NOT describe motion or camera movement — one frozen frame held still.
-- Chooses a camera framing (wide / medium / close-up) and varies it across scenes.
+- SHOT VARIETY & VISUAL HOOK: strongly VARY the shot type across scenes — wide establishing, medium, close-up, extreme close-up of eyes/hands/an object, over-the-shoulder, low or high angle, tilted/Dutch angle, framed through a foreground object or doorway, silhouette, reflection, or POV; compose with DEPTH and ONE clear eye-catching focal point. Do NOT repeat the same framing, and avoid a plain centred talking figure. For an ABSTRACT idea (an emotion, a concept, anything with no literal scene), show a striking visual METAPHOR or symbolic image instead of a person standing.
 - COLOUR / ERA: a style profile JSON with "scene_modes" is given below. Pick the scene_mode whose "when" best matches this scene's era/topic and apply ONLY its background, palette and lighting (the colours and setting). You MAY name a character's identifying features (e.g. round glasses, messy brown hair) so the right character appears, but do NOT describe the drawing style itself.
 - NEVER write a scene_mode KEY name (such as "ancient_day", "night", "concept", "modern") in the text; describe the colours in plain words instead.
 - Do NOT begin with a label like "MODERN:".
@@ -82,7 +82,7 @@ SYSTEM_CONTENT_VIDEO = """You describe ONLY the visual CONTENT of each scene for
 For EACH scene (you get its NARRATION), write ONE short English line describing:
 - WHO / WHAT appears and a minimal setting.
 - The ACTION / motion happening (use action verbs — it is a moving clip).
-- A camera framing (wide / medium / close-up).
+- SHOT VARIETY & VISUAL HOOK: strongly vary the shot type (wide, medium, close-up, extreme close-up of eyes/hands/an object, over-the-shoulder, low/high/tilted angle, foreground-framed, silhouette, reflection, POV); compose with depth and one eye-catching focal point; avoid repeating the same framing or a plain centred talking figure. For an abstract idea, use a striking visual metaphor instead of a person standing.
 Keep it to ONE concise sentence. Do NOT describe style, colors, or how it is drawn/rendered.
 
 Return ONLY a JSON array of strings, exactly one per scene, in the SAME ORDER. No commentary, no extra keys."""
@@ -91,7 +91,7 @@ SYSTEM_CONTENT_IMAGE = """You describe ONLY the visual CONTENT of each scene for
 
 For EACH scene (you get its NARRATION), write ONE short English line describing:
 - WHO / WHAT appears and a minimal setting (a single STILL moment — no motion, no camera movement).
-- A camera framing (wide / medium / close-up).
+- SHOT VARIETY & VISUAL HOOK: strongly vary the shot type (wide, medium, close-up, extreme close-up of eyes/hands/an object, over-the-shoulder, low/high/tilted angle, foreground-framed, silhouette, reflection, POV); compose with depth and one eye-catching focal point; avoid repeating the same framing or a plain centred talking figure. For an abstract idea, use a striking visual metaphor instead of a person standing.
 Keep it to ONE concise sentence. Do NOT describe style, colors, or how it is drawn/rendered.
 
 Return ONLY a JSON array of strings, exactly one per scene, in the SAME ORDER. No commentary, no extra keys."""
@@ -523,10 +523,14 @@ def generate_prompts(scenes_text, style, api_key, model=None,
 # IMAGE-TO-VIDEO: prompt CHUYỂN ĐỘNG (áp lên ảnh keyframe đã tạo sẵn).
 # Ảnh đã chứa nhân vật + bối cảnh + màu + style -> motion CHỈ tả camera + hành động.
 # ─────────────────────────────────────────────────────────────────────────────
-SYSTEM_MOTION = """You write IMAGE-TO-VIDEO motion prompts. Each scene ALREADY has a finished keyframe image (the character, setting, colours and art style are fixed in that image). For EACH scene you receive its NARRATION; write ONE short English line describing ONLY:
-- the CAMERA movement (e.g. slow push-in, gentle pan left, slow zoom out, static, slight handheld), and
-- the ONGOING action / motion to animate (what moves and how, matching the narration).
-You MUST NOT describe appearance, the character's looks, clothes, art style, colours, lighting or the background — they are already in the image. Keep it to ONE short line (about 8-16 words). {char}
+SYSTEM_MOTION = """You write IMAGE-TO-VIDEO motion prompts. Each scene ALREADY has a finished keyframe image (the character, setting, colours and art style are fixed in that image). For EACH scene you receive its NARRATION; write ONE English line (about 10-20 words) describing how to ANIMATE that image: a CAMERA move PLUS a concrete VISIBLE motion in the shot.
+
+VARIETY IS REQUIRED so the video does not feel boring or repetitive:
+- VARY the camera move across scenes — rotate through: slow push-in, pull-out / push-out, pan left, pan right, tilt up, tilt down, slow orbit / parallax, gentle handheld sway, rack focus, static hold. Do NOT use "push-in" in more than about one scene in four, and never repeat the same move many times in a row.
+- MATCH the energy to the narration: tense / conflict / danger beats -> faster, sharper moves (quick push-in, slight handheld, snap, whip); calm / resolution beats -> slow, settling moves.
+- Give a CONCRETE VISIBLE motion, not just an inner state: a gesture, a head/eye turn, a hand movement, a step, OR environmental motion (background people shifting, light flicker, drifting particles, steam, papers, fabric, rain). AVOID vague phrases like "realization settles" and avoid over-using "subtle / slight / quiet".
+
+You MUST NOT describe appearance, the character's looks, clothes, art style, colours, lighting or the background contents — they are already in the image. {char}
 Return ONLY a JSON array of strings, exactly one per scene, in the SAME ORDER. No commentary, no extra keys."""
 
 
