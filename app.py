@@ -191,26 +191,49 @@ class App:
         self.cfg = load_config()
         self.q = queue.Queue()
         root.title("Auto Edit Video 🎬")
-        root.geometry("780x680")
-        root.minsize(700, 600)
+        root.geometry("880x720")
+        root.minsize(780, 640)
 
-        nb = ttk.Notebook(root)
-        nb.pack(fill="both", expand=True, padx=6, pady=6)
-        self.tab_make = ttk.Frame(nb)
-        self.tab_queue = ttk.Frame(nb)
-        self.tab_set = ttk.Frame(nb)
-        nb.add(self.tab_make, text="  🎬 Làm video  ")
-        nb.add(self.tab_queue, text="  📋 Hàng đợi  ")
-        nb.add(self.tab_set, text="  ⚙️ Cài đặt  ")
+        # Biến nguyên liệu DÙNG CHUNG giữa các trang (SRT dùng cho cả Prompt lẫn Render)
+        self.srt = tk.StringVar(value=dflt("input", "subtitle.srt"))
+        self.images = tk.StringVar(value=dflt("input", "images"))
+        self.voice = tk.StringVar(value=self._auto_voice())
+        self.out = tk.StringVar(value=dflt("output", "final.mp4"))
+        self.secs = tk.StringVar(value="8")
+        self.kenburns = tk.BooleanVar(value=True)
+        self.subs = tk.BooleanVar(value=True)
+        self.crossfade = tk.BooleanVar(value=False)
 
-        self._build_make(self.tab_make)
-        self._build_queue(self.tab_queue)
-        self._build_settings(self.tab_set)
+        # Khung trên: SIDEBAR trái + nội dung phải
+        top = ttk.Frame(root)
+        top.pack(fill="both", expand=True, padx=6, pady=6)
+        side = ttk.Frame(top, width=165)
+        side.pack(side="left", fill="y", padx=(0, 6))
+        side.pack_propagate(False)
+        content = ttk.Frame(top)
+        content.pack(side="left", fill="both", expand=True)
+
+        # 4 trang nội dung
+        self.pages = {n: ttk.Frame(content) for n in ("prompt", "render", "queue", "settings")}
+        self._build_prompt(self.pages["prompt"])
+        self._build_render(self.pages["render"])
+        self._build_queue(self.pages["queue"])
+        self._build_settings(self.pages["settings"])
+
+        # Nút điều hướng sidebar
+        self._side_btns = {}
+        for name, label in (("prompt", "✍️  Tạo Prompt"), ("render", "🎬  Render Video"),
+                            ("queue", "📋  Hàng đợi"), ("settings", "⚙️  Cài đặt")):
+            b = tk.Button(side, text=label, anchor="w", relief="flat", bd=0,
+                          padx=12, pady=11, font=("", 10),
+                          command=lambda n=name: self._show_page(n))
+            b.pack(fill="x", pady=1)
+            self._side_btns[name] = b
 
         # Log + status (dùng chung)
         box = ttk.LabelFrame(root, text="Nhật ký")
-        box.pack(fill="both", expand=True, padx=6, pady=(0, 4))
-        self.log = tk.Text(box, height=9, wrap="word", bg="#1e1e1e",
+        box.pack(fill="both", expand=False, padx=6, pady=(0, 4))
+        self.log = tk.Text(box, height=8, wrap="word", bg="#1e1e1e",
                            fg="#d4d4d4", insertbackground="white")
         self.log.pack(side="left", fill="both", expand=True)
         sb = ttk.Scrollbar(box, command=self.log.yview)
@@ -220,22 +243,24 @@ class App:
         self.status = tk.StringVar(value="Sẵn sàng.")
         ttk.Label(root, textvariable=self.status, anchor="w",
                   relief="sunken").pack(fill="x", side="bottom")
+
+        self._show_page("prompt")
         self.root.after(100, self._drain)
 
-    # ============================ TAB LÀM VIDEO ============================
-    def _build_make(self, parent):
-        f1 = ttk.LabelFrame(parent, text="1. Nguyên liệu")
+    def _show_page(self, name):
+        for p in self.pages.values():
+            p.pack_forget()
+        self.pages[name].pack(fill="both", expand=True)
+        for n, b in self._side_btns.items():
+            b.configure(bg=("#cfe2ff" if n == name else "#f0f0f0"))
+
+    # ============================ TRANG TẠO PROMPT ============================
+    def _build_prompt(self, parent):
+        f1 = ttk.LabelFrame(parent, text="Nguyên liệu")
         f1.pack(fill="x", padx=8, pady=6)
-
-        self.srt = tk.StringVar(value=dflt("input", "subtitle.srt"))
-        self.images = tk.StringVar(value=dflt("input", "images"))
-        self.voice = tk.StringVar(value=self._auto_voice())
-        self.out = tk.StringVar(value=dflt("output", "final.mp4"))
-
         self._row(f1, "File PHỤ ĐỀ (SRT):", self.srt, lambda: self._pick_file(
             self.srt, [("SRT", "*.srt"), ("Tất cả", "*.*")]))
 
-        # Style profile chooser
         sf = ttk.Frame(f1)
         sf.pack(fill="x", padx=8, pady=3)
         ttk.Label(sf, text="Style Profile:", width=18).pack(side="left")
@@ -245,84 +270,98 @@ class App:
                                         state="readonly")
         self.cmb_profile.pack(side="left", fill="x", expand=True)
         self.cmb_profile.bind("<<ComboboxSelected>>", self._on_profile_pick)
-        ttk.Label(sf, text="(quản lý ở tab Cài đặt)", foreground="#888").pack(
-            side="left", padx=6)
+        ttk.Label(sf, text="(quản lý ở Cài đặt)", foreground="#888").pack(side="left", padx=6)
 
-        self._row(f1, "Thư mục ẢNH/CLIP:", self.images, self._pick_dir)
-        self._row(f1, "File VOICEOVER:", self.voice, lambda: self._pick_file(
-            self.voice, [("Audio", "*.mp3 *.wav *.m4a *.aac"), ("Tất cả", "*.*")]))
-        self._row(f1, "Xuất ra MP4:", self.out, self._pick_save)
+        linec = ttk.Frame(f1)
+        linec.pack(fill="x", padx=8, pady=3)
+        ttk.Label(linec, text="🎭 Tên nhân vật chính:", width=18).pack(side="left")
+        self.main_char = tk.StringVar(value=self.cfg.get("main_character", ""))
+        ttk.Entry(linec, textvariable=self.main_char, width=18).pack(side="left", padx=6)
+        ttk.Label(linec, foreground="#888",
+                  text="(để TRỐNG nếu không có nhân vật chính)").pack(side="left")
 
-        f2 = ttk.LabelFrame(parent, text="2. Tùy chọn ghép")
+        f2 = ttk.LabelFrame(parent, text="Tùy chọn prompt")
         f2.pack(fill="x", padx=8, pady=6)
         line = ttk.Frame(f2)
         line.pack(fill="x", padx=10, pady=6)
         ttk.Label(line, text="Số giây mỗi cảnh:").pack(side="left")
-        self.secs = tk.StringVar(value="8")
-        ttk.Spinbox(line, from_=2, to=30, width=5, textvariable=self.secs).pack(
-            side="left", padx=6)
-        self.kenburns = tk.BooleanVar(value=True)
-        self.subs = tk.BooleanVar(value=True)
-        ttk.Checkbutton(line, text="Ken Burns (zoom ảnh tĩnh)",
-                        variable=self.kenburns).pack(side="left", padx=12)
-        ttk.Checkbutton(line, text="Chèn phụ đề", variable=self.subs).pack(side="left")
-        self.crossfade = tk.BooleanVar(value=False)
-        ttk.Checkbutton(line, text="Crossfade ảnh", variable=self.crossfade).pack(
-            side="left", padx=8)
-
-        line2 = ttk.Frame(f2)
-        line2.pack(fill="x", padx=10, pady=(0, 6))
-        ttk.Label(line2, text="Loại prompt AI:").pack(side="left")
+        ttk.Spinbox(line, from_=2, to=30, width=5, textvariable=self.secs).pack(side="left", padx=6)
+        ttk.Label(line, text="Loại:").pack(side="left", padx=(16, 4))
         self.prompt_mode = tk.StringVar(value=self.cfg.get("prompt_mode", "video"))
-        ttk.Radiobutton(line2, text="🎬 Video (có chuyển động)", variable=self.prompt_mode,
-                        value="video", command=self._save_mode).pack(side="left", padx=8)
-        ttk.Radiobutton(line2, text="🖼️ Ảnh tĩnh", variable=self.prompt_mode,
-                        value="image", command=self._save_mode).pack(side="left", padx=8)
+        ttk.Radiobutton(line, text="🎬 Video", variable=self.prompt_mode,
+                        value="video", command=self._save_mode).pack(side="left", padx=4)
+        ttk.Radiobutton(line, text="🖼️ Ảnh tĩnh", variable=self.prompt_mode,
+                        value="image", command=self._save_mode).pack(side="left", padx=4)
 
         fstyle = ttk.LabelFrame(f2, text="Áp STYLE ở đâu? (chỉ 1 nơi — tránh chọi style)")
         fstyle.pack(fill="x", padx=10, pady=(0, 6))
         self.style_mode = tk.StringVar(value=self.cfg.get("style_mode", "in_prompt"))
         ttk.Radiobutton(
             fstyle, variable=self.style_mode, value="in_prompt", command=self._save_stylemode,
-            text="①  Trong prompt — Gemini kèm style  (TẮT Style Lock ở tool video)"
+            text="①  Trong prompt — kèm style  (TẮT Style Lock ở tool video)"
         ).pack(anchor="w", padx=8, pady=1)
         ttk.Radiobutton(
             fstyle, variable=self.style_mode, value="lock_art", command=self._save_stylemode,
-            text="⭐  Lock lo NÉT + Gemini lo MÀU/ERA  (BẬT Style Lock chỉ nét) — khuyên dùng"
+            text="⭐  Lock lo NÉT + AI lo MÀU/ERA  (BẬT Style Lock chỉ nét) — khuyên dùng"
         ).pack(anchor="w", padx=8, pady=1)
         ttk.Radiobutton(
             fstyle, variable=self.style_mode, value="lock_all", command=self._save_stylemode,
-            text="②  Lock lo TẤT CẢ style — Gemini chỉ viết nội dung  (BẬT Style Lock đầy đủ)"
+            text="②  Lock lo TẤT CẢ style — AI chỉ viết nội dung  (BẬT Style Lock đầy đủ)"
         ).pack(anchor="w", padx=8, pady=1)
 
-        linec = ttk.Frame(f2)
-        linec.pack(fill="x", padx=10, pady=(2, 6))
-        ttk.Label(linec, text="🎭 Tên nhân vật chính:").pack(side="left")
-        self.main_char = tk.StringVar(value=self.cfg.get("main_character", ""))
-        ttk.Entry(linec, textvariable=self.main_char, width=18).pack(side="left", padx=6)
-        ttk.Label(linec, foreground="#888",
-                  text="(AI sẽ viết tên này vào prompt + tả hành động đa dạng; "
-                       "để TRỐNG nếu video không có nhân vật chính)").pack(side="left")
-
-        # Buttons
         bar = ttk.Frame(parent)
         bar.pack(fill="x", padx=8, pady=8)
         self.btn_prompt = ttk.Button(bar, text="🤖  TẠO PROMPT (AI)",
                                      command=self.run_make_prompts)
         self.btn_prompt.pack(side="left", padx=4)
-        self.btn_render = ttk.Button(bar, text="▶  RENDER VIDEO",
-                                     command=self.run_render)
-        self.btn_render.pack(side="left", padx=4)
-        ttk.Button(bar, text="➕ Hàng đợi", command=self.add_to_queue).pack(
-            side="left", padx=4)
-        ttk.Button(bar, text="📂 Mở thư mục xuất", command=self.open_out).pack(
-            side="right", padx=4)
+        ttk.Button(bar, text="📄 Mở veo_prompts.txt",
+                   command=self._open_prompts).pack(side="left", padx=4)
 
-        hint = ("Quy trình: ①  bấm 'TẠO PROMPT' → ra veo_prompts.txt   →   "
-                "② tạo clip Veo, đặt tên 01,02... bỏ vào thư mục ảnh/clip   →   "
-                "③ bấm 'RENDER VIDEO'.")
-        ttk.Label(parent, text=hint, wraplength=720, foreground="#555").pack(
+        ttk.Label(parent, wraplength=640, foreground="#555",
+                  text="①  Bấm TẠO PROMPT → ra veo_prompts.txt  →  ②  tạo clip Veo (tên 01,02...) "
+                       "bỏ vào thư mục clip  →  ③  sang trang 🎬 Render.").pack(
             fill="x", padx=12, pady=(0, 4))
+
+    # ============================ TRANG RENDER ============================
+    def _build_render(self, parent):
+        f1 = ttk.LabelFrame(parent, text="Nguyên liệu")
+        f1.pack(fill="x", padx=8, pady=6)
+        self._row(f1, "File PHỤ ĐỀ (SRT):", self.srt, lambda: self._pick_file(
+            self.srt, [("SRT", "*.srt"), ("Tất cả", "*.*")]))
+        self._row(f1, "Thư mục ẢNH/CLIP:", self.images, self._pick_dir)
+        self._row(f1, "File VOICEOVER:", self.voice, lambda: self._pick_file(
+            self.voice, [("Audio", "*.mp3 *.wav *.m4a *.aac"), ("Tất cả", "*.*")]))
+        self._row(f1, "Xuất ra MP4:", self.out, self._pick_save)
+
+        f2 = ttk.LabelFrame(parent, text="Tùy chọn ghép")
+        f2.pack(fill="x", padx=8, pady=6)
+        line = ttk.Frame(f2)
+        line.pack(fill="x", padx=10, pady=8)
+        ttk.Checkbutton(line, text="Ken Burns (zoom ảnh tĩnh)",
+                        variable=self.kenburns).pack(side="left")
+        ttk.Checkbutton(line, text="Chèn phụ đề", variable=self.subs).pack(side="left", padx=14)
+        ttk.Checkbutton(line, text="Crossfade ảnh", variable=self.crossfade).pack(side="left")
+
+        bar = ttk.Frame(parent)
+        bar.pack(fill="x", padx=8, pady=8)
+        self.btn_render = ttk.Button(bar, text="▶  RENDER VIDEO", command=self.run_render)
+        self.btn_render.pack(side="left", padx=4)
+        ttk.Button(bar, text="➕ Thêm vào Hàng đợi",
+                   command=self.add_to_queue).pack(side="left", padx=4)
+        ttk.Button(bar, text="📂 Mở thư mục xuất",
+                   command=self.open_out).pack(side="right", padx=4)
+
+        ttk.Label(parent, wraplength=640, foreground="#555",
+                  text="Đặt clip Veo tên 01,02,... trong thư mục clip. Render dùng scenes.csv "
+                       "(sinh ở trang Tạo Prompt) để khớp clip theo đúng timestamp.").pack(
+            fill="x", padx=12, pady=(0, 4))
+
+    def _open_prompts(self):
+        p = dflt("veo_prompts.txt")
+        if os.path.isfile(p):
+            os.startfile(p)
+        else:
+            messagebox.showinfo("Chưa có", "Chưa có veo_prompts.txt — bấm TẠO PROMPT trước.")
 
     # ============================ TAB CÀI ĐẶT ============================
     def _build_settings(self, parent):
