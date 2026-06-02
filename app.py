@@ -49,6 +49,7 @@ def default_config():
         "active_profile": "Người que",
         "prompt_mode": "video",
         "style_mode": "in_prompt",
+        "workflow": "t2v",                          # t2v (1 prompt video) | i2v (ảnh + chuyển động)
         "main_character": "",
         "queue": [],
     }
@@ -292,6 +293,19 @@ class App:
                         value="video", command=self._save_mode).pack(side="left", padx=4)
         ttk.Radiobutton(line, text="🖼️ Ảnh tĩnh", variable=self.prompt_mode,
                         value="image", command=self._save_mode).pack(side="left", padx=4)
+
+        fw = ttk.LabelFrame(f2, text="Quy trình")
+        fw.pack(fill="x", padx=10, pady=(0, 6))
+        self.workflow = tk.StringVar(value=self.cfg.get("workflow", "t2v"))
+        ttk.Radiobutton(
+            fw, variable=self.workflow, value="t2v", command=self._save_workflow,
+            text="Text-to-video — 1 prompt video  (video KHÔNG cần nhân vật cố định)"
+        ).pack(anchor="w", padx=8, pady=1)
+        ttk.Radiobutton(
+            fw, variable=self.workflow, value="i2v", command=self._save_workflow,
+            text="⭐ Image-to-video — sinh 2 bộ: prompt ẢNH + prompt CHUYỂN ĐỘNG  "
+                 "(video CÓ nhân vật chính, đồng nhất cao)"
+        ).pack(anchor="w", padx=8, pady=1)
 
         fstyle = ttk.LabelFrame(f2, text="Áp STYLE ở đâu? (chỉ 1 nơi — tránh chọi style)")
         fstyle.pack(fill="x", padx=10, pady=(0, 6))
@@ -631,6 +645,10 @@ class App:
         self.cfg["style_mode"] = self.style_mode.get()
         save_config(self.cfg)
 
+    def _save_workflow(self):
+        self.cfg["workflow"] = self.workflow.get()
+        save_config(self.cfg)
+
     def check_api(self):
         self._save_key()
         prov = self.provider_var.get()
@@ -780,44 +798,68 @@ class App:
                 segs = ae.parse_srt(srt)
                 scenes = bs.group_scenes(segs, target)
                 texts = [" ".join(t.strip() for t in s["texts"]).strip() for s in scenes]
-                mode = self.prompt_mode.get()
-                loai = "ẢNH tĩnh" if mode == "image" else "VIDEO"
-                kieu = {"in_prompt": "kèm style trong prompt",
-                        "lock_art": "Lock nét + AI lo màu/era",
-                        "lock_all": "chỉ nội dung (Lock lo style)"}.get(smode, smode)
-                self.q.put(("line", f"• {len(segs)} đoạn → {len(scenes)} cảnh. "
-                                    f"Gọi {prov} viết prompt {loai} [{kieu}]...\n"))
+                import csv
+                wf = self.workflow.get()
+                model = self.cfg.get("models", {}).get(prov)
 
                 def prog(done, total):
-                    self.q.put(("line", f"   ...đã viết {done}/{total} prompt\n"))
+                    self.q.put(("line", f"   ...{done}/{total}\n"))
 
-                prompts = ai_prompts.generate_prompts(
-                    texts, style, key, model=self.cfg.get("models", {}).get(prov),
-                    progress=prog, mode=mode, style_mode=smode, provider=prov,
-                    character=character)
+                def write_scenes(img_prompts, motion=None):
+                    sc = dflt("scenes.csv")
+                    cols = ["scene", "start", "end", "dur", "veo_sec", "speed", "text", "prompt"]
+                    if motion is not None:
+                        cols.append("motion")
+                    with open(sc, "w", newline="", encoding="utf-8-sig") as f:
+                        w = csv.writer(f)
+                        w.writerow(cols)
+                        for i, s in enumerate(scenes):
+                            dur = round(s["end"] - s["start"], 2)
+                            veo, _pct, speed = bs.nearest_veo(dur)
+                            row = [i + 1, bs.fmt(s["start"]), bs.fmt(s["end"]), dur, veo, speed,
+                                   texts[i], (img_prompts[i] if i < len(img_prompts) else "")]
+                            if motion is not None:
+                                row.append(motion[i] if i < len(motion) else "")
+                            w.writerow(row)
+                    return sc
 
-                # Ghi veo_prompts.txt
-                vp = dflt("veo_prompts.txt")
-                with open(vp, "w", encoding="utf-8") as f:
-                    f.write("\n".join(p.replace("\n", " ").strip() for p in prompts) + "\n")
-
-                # Ghi scenes.csv (kèm prompt)
-                import csv
-                sc = dflt("scenes.csv")
-                with open(sc, "w", newline="", encoding="utf-8-sig") as f:
-                    w = csv.writer(f)
-                    w.writerow(["scene", "start", "end", "dur", "veo_sec", "speed", "text", "prompt"])
-                    for i, s in enumerate(scenes):
-                        dur = round(s["end"] - s["start"], 2)
-                        veo, _pct, speed = bs.nearest_veo(dur)
-                        pr = prompts[i] if i < len(prompts) else ""
-                        w.writerow([i + 1, bs.fmt(s["start"]), bs.fmt(s["end"]),
-                                    dur, veo, speed, texts[i], pr])
-
-                self.q.put(("line", f"\n• Đã ghi {len(prompts)} prompt vào:\n"
-                                    f"   {vp}\n   {sc}\n"))
-                self.q.put(("done", f"✅ Xong! Đã viết {len(prompts)} prompt. "
-                                    "Mở veo_prompts.txt để dán vào Veo."))
+                if wf == "i2v":
+                    self.q.put(("line", f"• {len(segs)} đoạn → {len(scenes)} cảnh. "
+                                        f"[Image-to-video] gọi {prov}...\n"))
+                    self.q.put(("line", "• (1/2) Viết prompt ẢNH keyframe...\n"))
+                    img_prompts = ai_prompts.generate_prompts(
+                        texts, style, key, model=model, progress=prog, mode="image",
+                        style_mode=smode, provider=prov, character=character)
+                    self.q.put(("line", "• (2/2) Viết prompt CHUYỂN ĐỘNG...\n"))
+                    motion = ai_prompts.generate_motion_prompts(
+                        texts, key, model=model, progress=prog, provider=prov, character=character)
+                    ip, mp = dflt("image_prompts.txt"), dflt("motion_prompts.txt")
+                    with open(ip, "w", encoding="utf-8") as f:
+                        f.write("\n".join(p.replace("\n", " ").strip() for p in img_prompts) + "\n")
+                    with open(mp, "w", encoding="utf-8") as f:
+                        f.write("\n".join(p.replace("\n", " ").strip() for p in motion) + "\n")
+                    sc = write_scenes(img_prompts, motion)
+                    self.q.put(("line", f"\n• Đã ghi:\n   {ip}\n   {mp}\n   {sc}\n"))
+                    self.q.put(("done", f"✅ Xong (Image-to-video)! {len(img_prompts)} cảnh × 2 prompt. "
+                                        "Dùng image_prompts.txt tạo keyframe → motion_prompts.txt cho i2v."))
+                else:
+                    mode = self.prompt_mode.get()
+                    loai = "ẢNH tĩnh" if mode == "image" else "VIDEO"
+                    kieu = {"in_prompt": "kèm style trong prompt",
+                            "lock_art": "Lock nét + AI lo màu/era",
+                            "lock_all": "chỉ nội dung (Lock lo style)"}.get(smode, smode)
+                    self.q.put(("line", f"• {len(segs)} đoạn → {len(scenes)} cảnh. "
+                                        f"Gọi {prov} viết prompt {loai} [{kieu}]...\n"))
+                    prompts = ai_prompts.generate_prompts(
+                        texts, style, key, model=model, progress=prog, mode=mode,
+                        style_mode=smode, provider=prov, character=character)
+                    vp = dflt("veo_prompts.txt")
+                    with open(vp, "w", encoding="utf-8") as f:
+                        f.write("\n".join(p.replace("\n", " ").strip() for p in prompts) + "\n")
+                    sc = write_scenes(prompts)
+                    self.q.put(("line", f"\n• Đã ghi {len(prompts)} prompt vào:\n   {vp}\n   {sc}\n"))
+                    self.q.put(("done", f"✅ Xong! Đã viết {len(prompts)} prompt. "
+                                        "Mở veo_prompts.txt để dán vào Veo."))
             except Exception as e:  # noqa
                 self.q.put(("done", f"Lỗi: {e}"))
 

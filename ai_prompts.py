@@ -421,6 +421,44 @@ def _inject_character(system, character):
     return system[:idx] + block + "\n\n" + system[idx:]
 
 
+def _run_batches(system, scenes_text, api_key, model, batch, progress, provider):
+    """Gọi AI theo batch (tự retry/đổi model) + parse JSON -> list[str] thô.
+    Dùng chung cho prompt nội dung lẫn prompt chuyển động (image-to-video)."""
+    pref = MODELS.get(provider, MODELS["gemini"])
+    order = ([model] if model else []) + [m for m in pref if m != model]
+    chosen = None
+    out = []
+    n = len(scenes_text)
+    for start in range(0, n, batch):
+        chunk = scenes_text[start:start + batch]
+        listing = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(chunk))
+        user = (f"Here are {len(chunk)} scenes. Write one prompt for each, "
+                f"returning a JSON array of exactly {len(chunk)} strings, in order.\n\n{listing}")
+        txt, last = None, None
+        for attempt in range(4):     # tự thử lại khi lỗi tạm thời (429/500/503)
+            models_try = ([chosen] if chosen else []) + [m for m in order if m != chosen]
+            for m in models_try:
+                try:
+                    txt = _call(provider, api_key, m, system, user)
+                    chosen = m
+                    break
+                except GeminiError as e:
+                    last = e
+                    if e.code in (404, 429, 500, 503):
+                        continue
+                    raise RuntimeError(_friendly(e))
+            if txt is not None:
+                break
+            chosen = None
+            time.sleep(2 * (attempt + 1))
+        if txt is None:
+            raise RuntimeError(_friendly(last))
+        out.extend(_parse_array(txt, len(chunk)))
+        if progress:
+            progress(min(start + batch, n), n)
+    return out
+
+
 def generate_prompts(scenes_text, style, api_key, model=None,
                      batch=None, progress=None, mode="video", embed_style=True,
                      style_mode=None, provider="gemini", character=""):
@@ -469,41 +507,7 @@ def generate_prompts(scenes_text, style, api_key, model=None,
         else:
             system = SYSTEM_CONTENT_IMAGE if mode == "image" else SYSTEM_CONTENT_VIDEO
     system = _inject_character(system, character)   # nếu có nhân vật chính
-    pref = MODELS.get(provider, MODELS["gemini"])
-    order = ([model] if model else []) + [m for m in pref if m != model]
-    chosen = None
-    out = []
-    n = len(scenes_text)
-
-    for start in range(0, n, batch):
-        chunk = scenes_text[start:start + batch]
-        listing = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(chunk))
-        user = (f"Here are {len(chunk)} scenes. Write one video prompt for each, "
-                f"returning a JSON array of exactly {len(chunk)} strings, in order.\n\n{listing}")
-
-        txt, last = None, None
-        for attempt in range(4):     # tự thử lại khi lỗi tạm thời (429/500/503)
-            models_try = ([chosen] if chosen else []) + [m for m in order if m != chosen]
-            for m in models_try:
-                try:
-                    txt = _call(provider, api_key, m, system, user)
-                    chosen = m
-                    break
-                except GeminiError as e:
-                    last = e
-                    if e.code in (404, 429, 500, 503):
-                        continue
-                    raise RuntimeError(_friendly(e))
-            if txt is not None:
-                break
-            chosen = None
-            time.sleep(2 * (attempt + 1))    # 2s, 4s, 6s... rồi thử lại
-        if txt is None:
-            raise RuntimeError(_friendly(last))
-
-        out.extend(_parse_array(txt, len(chunk)))
-        if progress:
-            progress(min(start + batch, n), n)
+    out = _run_batches(system, scenes_text, api_key, model, batch, progress, provider)
 
     # Hậu xử lý: dọn tên key rò rỉ + ghép câu ART-STYLE cố định vào đầu mỗi prompt.
     result = []
@@ -513,3 +517,29 @@ def generate_prompts(scenes_text, style, api_key, model=None,
             p = f"{caption} {p}"
         result.append(p)
     return result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# IMAGE-TO-VIDEO: prompt CHUYỂN ĐỘNG (áp lên ảnh keyframe đã tạo sẵn).
+# Ảnh đã chứa nhân vật + bối cảnh + màu + style -> motion CHỈ tả camera + hành động.
+# ─────────────────────────────────────────────────────────────────────────────
+SYSTEM_MOTION = """You write IMAGE-TO-VIDEO motion prompts. Each scene ALREADY has a finished keyframe image (the character, setting, colours and art style are fixed in that image). For EACH scene you receive its NARRATION; write ONE short English line describing ONLY:
+- the CAMERA movement (e.g. slow push-in, gentle pan left, slow zoom out, static, slight handheld), and
+- the ONGOING action / motion to animate (what moves and how, matching the narration).
+You MUST NOT describe appearance, the character's looks, clothes, art style, colours, lighting or the background — they are already in the image. Keep it to ONE short line (about 8-16 words). {char}
+Return ONLY a JSON array of strings, exactly one per scene, in the SAME ORDER. No commentary, no extra keys."""
+
+
+def generate_motion_prompts(scenes_text, api_key, model=None, batch=None,
+                            progress=None, provider="gemini", character=""):
+    """Sinh prompt CHUYỂN ĐỘNG cho image-to-video (1 dòng/cảnh, chỉ camera + hành động)."""
+    if not api_key or not api_key.strip():
+        raise RuntimeError("Chưa nhập API key (vào tab Cài đặt).")
+    if batch is None:
+        batch = DEFAULT_BATCH.get(provider, 12)
+    api_key = api_key.strip()
+    char = (f'If the main character "{character.strip()}" appears, you may use the name in '
+            f"the action.") if (character and character.strip()) else ""
+    system = SYSTEM_MOTION.format(char=char)
+    out = _run_batches(system, scenes_text, api_key, model, batch, progress, provider)
+    return [(p or "").strip() for p in out]
