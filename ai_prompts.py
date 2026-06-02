@@ -47,6 +47,7 @@ For EACH scene, write ONE concise English line that:
 - Describes MOTION / action (a short moving clip): use action verbs.
 - Keep each scene to ONE single action/moment; do NOT chain events with "then" / "transitions to" / "followed by" (each clip lasts only a few seconds).
 - SHOT VARIETY & VISUAL HOOK: strongly VARY the shot type across scenes — wide establishing, medium, close-up, extreme close-up of eyes/hands/an object, over-the-shoulder, low or high angle, tilted/Dutch angle, framed through a foreground object or doorway, silhouette, reflection, or POV; compose with DEPTH and ONE clear eye-catching focal point. Do NOT repeat the same framing, and avoid a plain centred talking figure. For an ABSTRACT idea (an emotion, a concept, anything with no literal scene), show a striking visual METAPHOR or symbolic image instead of a person standing.
+- CONCRETE DETAIL: fill the frame with SPECIFIC tangible detail — name the key objects/props and what sits in the foreground vs the background, and show the character's exact posture, gesture and gaze. Never settle for a generic "person with an expression"; make every frame specific and rich.
 - COLOUR / ERA: a style profile JSON with "scene_modes" is given below. Pick the scene_mode whose "when" best matches this scene's era/topic and apply ONLY its background, palette and lighting (the colours and setting). You MAY name a character's identifying features (e.g. round glasses, messy brown hair) so the right character appears, but do NOT describe the drawing style itself.
 - NEVER write a scene_mode KEY name (such as "ancient_day", "night", "concept", "modern") in the text; describe the colours in plain words instead.
 - Do NOT begin with a label like "MODERN:".
@@ -65,6 +66,7 @@ For EACH scene, write ONE concise English line that:
 - Visually conveys the MEANING of the narration (not a literal word-for-word transcription).
 - Describes a SINGLE STILL moment (subject, setting, framing). Do NOT describe motion or camera movement — one frozen frame held still.
 - SHOT VARIETY & VISUAL HOOK: strongly VARY the shot type across scenes — wide establishing, medium, close-up, extreme close-up of eyes/hands/an object, over-the-shoulder, low or high angle, tilted/Dutch angle, framed through a foreground object or doorway, silhouette, reflection, or POV; compose with DEPTH and ONE clear eye-catching focal point. Do NOT repeat the same framing, and avoid a plain centred talking figure. For an ABSTRACT idea (an emotion, a concept, anything with no literal scene), show a striking visual METAPHOR or symbolic image instead of a person standing.
+- CONCRETE DETAIL: fill the frame with SPECIFIC tangible detail — name the key objects/props and what sits in the foreground vs the background, and show the character's exact posture, gesture and gaze. Never settle for a generic "person with an expression"; make every frame specific and rich.
 - COLOUR / ERA: a style profile JSON with "scene_modes" is given below. Pick the scene_mode whose "when" best matches this scene's era/topic and apply ONLY its background, palette and lighting (the colours and setting). You MAY name a character's identifying features (e.g. round glasses, messy brown hair) so the right character appears, but do NOT describe the drawing style itself.
 - NEVER write a scene_mode KEY name (such as "ancient_day", "night", "concept", "modern") in the text; describe the colours in plain words instead.
 - Do NOT begin with a label like "MODERN:".
@@ -82,7 +84,7 @@ SYSTEM_CONTENT_VIDEO = """You describe ONLY the visual CONTENT of each scene for
 For EACH scene (you get its NARRATION), write ONE short English line describing:
 - WHO / WHAT appears and a minimal setting.
 - The ACTION / motion happening (use action verbs — it is a moving clip).
-- SHOT VARIETY & VISUAL HOOK: strongly vary the shot type (wide, medium, close-up, extreme close-up of eyes/hands/an object, over-the-shoulder, low/high/tilted angle, foreground-framed, silhouette, reflection, POV); compose with depth and one eye-catching focal point; avoid repeating the same framing or a plain centred talking figure. For an abstract idea, use a striking visual metaphor instead of a person standing.
+- SHOT VARIETY & VISUAL HOOK: strongly vary the shot type (wide, medium, close-up, extreme close-up of eyes/hands/an object, over-the-shoulder, low/high/tilted angle, foreground-framed, silhouette, reflection, POV); compose with depth and one eye-catching focal point; avoid repeating the same framing or a plain centred talking figure. For an abstract idea, use a striking visual metaphor instead of a person standing. Fill the frame with SPECIFIC tangible detail (key objects/props, foreground vs background, the character's exact posture/gesture/gaze); never settle for a generic "person with an expression".
 Keep it to ONE concise sentence. Do NOT describe style, colors, or how it is drawn/rendered.
 
 Return ONLY a JSON array of strings, exactly one per scene, in the SAME ORDER. No commentary, no extra keys."""
@@ -91,7 +93,7 @@ SYSTEM_CONTENT_IMAGE = """You describe ONLY the visual CONTENT of each scene for
 
 For EACH scene (you get its NARRATION), write ONE short English line describing:
 - WHO / WHAT appears and a minimal setting (a single STILL moment — no motion, no camera movement).
-- SHOT VARIETY & VISUAL HOOK: strongly vary the shot type (wide, medium, close-up, extreme close-up of eyes/hands/an object, over-the-shoulder, low/high/tilted angle, foreground-framed, silhouette, reflection, POV); compose with depth and one eye-catching focal point; avoid repeating the same framing or a plain centred talking figure. For an abstract idea, use a striking visual metaphor instead of a person standing.
+- SHOT VARIETY & VISUAL HOOK: strongly vary the shot type (wide, medium, close-up, extreme close-up of eyes/hands/an object, over-the-shoulder, low/high/tilted angle, foreground-framed, silhouette, reflection, POV); compose with depth and one eye-catching focal point; avoid repeating the same framing or a plain centred talking figure. For an abstract idea, use a striking visual metaphor instead of a person standing. Fill the frame with SPECIFIC tangible detail (key objects/props, foreground vs background, the character's exact posture/gesture/gaze); never settle for a generic "person with an expression".
 Keep it to ONE concise sentence. Do NOT describe style, colors, or how it is drawn/rendered.
 
 Return ONLY a JSON array of strings, exactly one per scene, in the SAME ORDER. No commentary, no extra keys."""
