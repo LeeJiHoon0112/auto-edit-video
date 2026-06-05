@@ -10,6 +10,7 @@ Tự động chọn model còn hạn mức: nếu model đầu bị 429/404 sẽ
 """
 import json
 import re
+import sys
 import time
 import urllib.request
 import urllib.error
@@ -48,11 +49,14 @@ For EACH scene, write ONE concise English line that:
 - Keep each scene to ONE single action/moment; do NOT chain events with "then" / "transitions to" / "followed by" (each clip lasts only a few seconds).
 - SHOT VARIETY & VISUAL HOOK: strongly VARY the shot type across scenes — wide establishing, medium, close-up, extreme close-up of eyes/hands/an object, over-the-shoulder, low or high angle, tilted/Dutch angle, framed through a foreground object or doorway, silhouette, reflection, or POV; compose with DEPTH and ONE clear eye-catching focal point. Do NOT repeat the same framing, and avoid a plain centred talking figure. For an ABSTRACT idea (an emotion, a concept, anything with no literal scene), show a striking visual METAPHOR or symbolic image instead of a person standing.
 - CONCRETE DETAIL: fill the frame with SPECIFIC tangible detail — name the key objects/props and what sits in the foreground vs the background, and show the character's exact posture, gesture and gaze. Never settle for a generic "person with an expression"; make every frame specific and rich.
-- COLOUR / ERA: a style profile JSON with "scene_modes" is given below. Pick the scene_mode whose "when" best matches this scene's era/topic and apply ONLY its background, palette and lighting (the colours and setting). You MAY name a character's identifying features (e.g. round glasses, messy brown hair) so the right character appears, but do NOT describe the drawing style itself.
+- COLOUR / ERA: a style profile JSON with "scene_modes" is given below. Pick the scene_mode whose "when" best matches this scene's era/topic and apply ONLY its background, palette and lighting (the colours and setting). Do NOT describe the drawing style itself.
+- CHARACTER CONSISTENCY (MANDATORY): the "characters" field lists distinct character types with their visual traits. Every time a human appears in a scene, follow BOTH steps:
+  STEP 1 — IDENTIFY the correct type from context: prehistoric / hunting / savannah / ancient era → use ancient_human traits. Present-day / technology / office / modern life → use modern_human traits. Other types (scientist, child, etc.) → match accordingly.
+  STEP 2 — WRITE every key trait of that type explicitly (hair, clothing, build). Never write a vague "person", "human", "figure", or "character" alone — always attach the full visual description so the generator renders them correctly. Skipping even one trait causes visual inconsistency across clips.
 - NEVER write a scene_mode KEY name (such as "ancient_day", "night", "concept", "modern") in the text; describe the colours in plain words instead.
 - Do NOT begin with a label like "MODERN:".
 
-STYLE PROFILE (use ONLY scene_modes for colour/era; the art style is added separately):
+STYLE PROFILE (scene_modes = colour/era; characters = who looks like what; art style added separately):
 ---
 {style}
 ---
@@ -67,7 +71,10 @@ For EACH scene, write ONE concise English line that:
 - Describes a SINGLE STILL moment (subject, setting, framing). Do NOT describe motion or camera movement — one frozen frame held still.
 - SHOT VARIETY & VISUAL HOOK: strongly VARY the shot type across scenes — wide establishing, medium, close-up, extreme close-up of eyes/hands/an object, over-the-shoulder, low or high angle, tilted/Dutch angle, framed through a foreground object or doorway, silhouette, reflection, or POV; compose with DEPTH and ONE clear eye-catching focal point. Do NOT repeat the same framing, and avoid a plain centred talking figure. For an ABSTRACT idea (an emotion, a concept, anything with no literal scene), show a striking visual METAPHOR or symbolic image instead of a person standing.
 - CONCRETE DETAIL: fill the frame with SPECIFIC tangible detail — name the key objects/props and what sits in the foreground vs the background, and show the character's exact posture, gesture and gaze. Never settle for a generic "person with an expression"; make every frame specific and rich.
-- COLOUR / ERA: a style profile JSON with "scene_modes" is given below. Pick the scene_mode whose "when" best matches this scene's era/topic and apply ONLY its background, palette and lighting (the colours and setting). You MAY name a character's identifying features (e.g. round glasses, messy brown hair) so the right character appears, but do NOT describe the drawing style itself.
+- COLOUR / ERA: a style profile JSON with "scene_modes" is given below. Pick the scene_mode whose "when" best matches this scene's era/topic and apply ONLY its background, palette and lighting (the colours and setting). Do NOT describe the drawing style itself.
+- CHARACTER CONSISTENCY (MANDATORY): the "characters" field lists distinct character types with their visual traits. Every time a human appears in a scene, follow BOTH steps:
+  STEP 1 — IDENTIFY the correct type from context: prehistoric / hunting / savannah / ancient era → use ancient_human traits. Present-day / technology / office / modern life → use modern_human traits. Other types (scientist, child, etc.) → match accordingly.
+  STEP 2 — WRITE every key trait of that type explicitly (hair, clothing, build). Never write a vague "person", "human", "figure", or "character" alone — always attach the full visual description so the generator renders them correctly. Skipping even one trait causes visual inconsistency across clips.
 - NEVER write a scene_mode KEY name (such as "ancient_day", "night", "concept", "modern") in the text; describe the colours in plain words instead.
 - Do NOT begin with a label like "MODERN:".
 
@@ -288,7 +295,9 @@ def _parse_array(txt, expected):
         try:
             arr = json.loads(cand)
             if isinstance(arr, list) and arr:
-                arr = [str(x).replace("\n", " ").strip() for x in arr if str(x).strip()]
+                # KHÔNG lọc item rỗng (if str(x).strip()) để giữ đúng VỊ TRÍ từng cảnh.
+                # Lọc sẽ gây LỆCH: ["A","","C"] -> ["A","C",""] -> cảnh 2 nhận prompt cảnh 3.
+                arr = [str(x).replace("\n", " ").strip() for x in arr]
                 if len(arr) < expected:
                     arr += [""] * (expected - len(arr))
                 return arr[:expected]
@@ -301,7 +310,7 @@ def _parse_array(txt, expected):
         try:
             arr = json.loads(txt[i:jx + 1])
             if isinstance(arr, list) and arr:
-                arr = [str(x).replace("\n", " ").strip() for x in arr if str(x).strip()]
+                arr = [str(x).replace("\n", " ").strip() for x in arr]
                 if len(arr) < expected:
                     arr += [""] * (expected - len(arr))
                 return arr[:expected]
@@ -345,44 +354,108 @@ def _scene_mode_keys(style):
     return []
 
 
-def _style_caption(style):
-    """Câu ART-STYLE CỐ ĐỊNH (text tự nhiên) để TOOL tự ghép vào MỌI prompt.
+def _character_keys(style):
+    """Tên KEY trong 'characters' (vd modern_human, ancient_human). AI đôi khi copy
+    nguyên key có gạch dưới vào prompt -> cần đổi '_' thành khoảng trắng cho dễ đọc."""
+    d = _as_json(style)
+    if d and isinstance(d.get("characters"), dict):
+        return list(d["characters"].keys())
+    return []
 
-    - Profile JSON: ghép art_style + line_work + shading_lighting + mood.
-      KHÔNG lấy "characters" và "scene_modes": characters để Gemini nêu theo từng
-      cảnh (chỉ nhân vật xuất hiện), scene_modes để Gemini lo MÀU/ERA. Nhờ vậy
-      art-style đồng nhất 100% mọi cảnh mà không bắt nhầm cả nhân vật không có mặt.
-    - Profile text thuần: dùng nguyên văn cả khối làm style.
+
+# ─── Robust style parsing: ĐỌC ĐƯỢC MỌI cấu trúc JSON profile (kể cả lồng / tên lạ) ──
+# Tên field NÉT (cho caption). So khớp substring sau khi chuẩn hoá -> nhận nhiều biến thể.
+_CAPTION_FIELDS = ("art_style", "artstyle", "art_direction", "line_work", "linework",
+                   "lineart", "outline", "shading_lighting", "shading", "rendering",
+                   "render_style", "aesthetic", "full_prompt", "full_style_tag", "style_tag")
+_MOOD_FIELDS = ("mood", "tone", "atmosphere")
+# Tên field NỘI DUNG (gửi AI lo màu/bối cảnh/nhân vật/góc máy).
+_AI_FIELDS = ("scene_mode", "scenes", "color_palette", "colour_palette", "colors",
+              "colours", "palette", "characters", "character", "variety", "composition",
+              "camera")
+
+
+def _norm_key(k):
+    return str(k).lower().replace("-", "_").replace(" ", "_")
+
+
+def _to_text(obj):
+    """Làm phẳng dict/list/scalar lồng nhau thành text đọc được (bỏ tên key cho gọn)."""
+    if isinstance(obj, bool):
+        return ""
+    if isinstance(obj, str):
+        return obj.strip()
+    if isinstance(obj, (int, float)):
+        return str(obj)
+    if isinstance(obj, list):
+        return ", ".join(t for t in (_to_text(x) for x in obj) if t)
+    if isinstance(obj, dict):
+        return "; ".join(t for t in (_to_text(v) for v in obj.values()) if t)
+    return ""
+
+
+def _deep_collect(obj, names):
+    """Duyệt ĐỆ QUY: mỗi key khớp tên (substring sau norm) -> lấy text value 1 lần,
+    không đi sâu vào key đã khớp. Nhờ vậy field lồng mấy lớp cũng moi ra được."""
+    out = []
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if any(n in _norm_key(k) for n in names):
+                t = _to_text(v)
+                if t:
+                    out.append(t)
+            else:
+                out.extend(_deep_collect(v, names))
+    elif isinstance(obj, list):
+        for v in obj:
+            out.extend(_deep_collect(v, names))
+    return out
+
+
+def _style_caption(style):
+    """Câu ART-STYLE CỐ ĐỊNH (text) để TOOL tự ghép vào MỌI prompt.
+
+    ROBUST: đọc được MỌI cấu trúc JSON — tìm sâu các field nét (kể cả lồng / tên lạ),
+    và nếu không khớp tên nào thì FALLBACK làm phẳng cả JSON -> KHÔNG BAO GIỜ rỗng.
+    Profile text thuần -> dùng nguyên văn.
     """
     s = (style or "").strip()
     if not s:
         return ""
     d = _as_json(s)
     if d is None:
-        return s
-    parts = []
-    for k in ("art_style", "line_work", "shading_lighting"):
-        v = d.get(k)
-        if v and str(v).strip():
-            parts.append(str(v).strip())
-    mood = d.get("mood")
-    if mood and str(mood).strip():
-        parts.append("overall mood: " + str(mood).strip())
-    parts = [p.rstrip(" .") for p in parts]
-    parts = [(p[:1].upper() + p[1:]) for p in parts if p]   # viết hoa đầu mỗi vế
+        return s                                   # text thuần -> dùng nguyên
+    parts = _deep_collect(d, _CAPTION_FIELDS)       # gom phần NÉT (tìm sâu)
+    mood = _deep_collect(d, _MOOD_FIELDS)
+    if mood:
+        parts.append("overall mood: " + mood[0])
+    if not parts:
+        # FALLBACK: JSON cấu trúc lạ -> làm phẳng toàn bộ (bỏ phần động scene/character)
+        skip = ("scene_mode", "scenes", "character")
+        leftover = {k: v for k, v in d.items()
+                    if not any(x in _norm_key(k) for x in skip)}
+        flat = _to_text(leftover or d)
+        return flat
+    parts = [p.rstrip(" .") for p in parts if p.strip()]
+    parts = [(p[:1].upper() + p[1:]) for p in parts]   # viết hoa đầu mỗi vế
     cap = ". ".join(parts)
     return (cap + ".") if cap else ""
 
 
+def style_caption_is_empty(style):
+    """True nếu profile KHÔNG sinh được caption nét nào (để UI cảnh báo người dùng)."""
+    return not _style_caption(style).strip()
+
+
 def _style_for_ai(style):
-    """Style RÚT GỌN gửi cho AI ở chế độ SPLIT: BỎ các field ART-STYLE mà AI bị CẤM
-    mô tả (art_style / line_work / shading_lighting) -> tiết kiệm token input, không
-    mất gì (art-style do TOOL ghép caption / Lock lo). Giữ scene_modes (màu/era),
-    characters, variety, mood. Profile text thuần -> giữ nguyên."""
+    """Style gửi cho AI: giữ field NỘI DUNG (scene_modes/characters/variety/màu...),
+    bỏ field NÉT (AI bị cấm tả). ROBUST: nhận nhiều tên; nếu không khớp gì ->
+    gửi NGUYÊN JSON để AI tự đọc (không bao giờ rỗng). Text thuần -> giữ nguyên."""
     d = _as_json(style)
     if d is None:
         return (style or "").strip()
-    keep = {k: d[k] for k in ("scene_modes", "characters", "variety", "mood") if k in d}
+    keep = {k: v for k, v in d.items()
+            if any(n in _norm_key(k) for n in _AI_FIELDS)}
     return json.dumps(keep, ensure_ascii=False) if keep else (style or "").strip()
 
 
@@ -394,6 +467,26 @@ def _strip_mode_keys(text, keys):
         if "_" in k:
             text = re.sub(r"\b" + re.escape(k) + r"\b", k.replace("_", " "), text)
     return text
+
+
+def _title_context(title):
+    """Câu ngữ cảnh tiêu đề video — ghép vào ĐẦU system prompt để AI hiểu chủ đề tổng thể.
+    Giúp AI chọn ẩn dụ đúng, giữ nhất quán xuyên suốt video (quan trọng với kịch bản abstract)."""
+    t = (title or "").strip()
+    if not t:
+        return ""
+    return (f'VIDEO TITLE (overall context): "{t}"\n'
+            f'This is the title of the video you are writing prompts for. '
+            f'Use it to understand the overarching theme and narrative so every prompt '
+            f'feels like it belongs to THIS specific story: consistent metaphors and '
+            f'consistent emotional tone.\n'
+            f'CRITICAL: the title gives you the THEME ONLY. It must NEVER override the '
+            f'era, setting or character type of an INDIVIDUAL scene. Each scene\'s own '
+            f'narration decides whether it is prehistoric or modern (or any other setting). '
+            f'A modern-sounding title (e.g. about phones) does NOT mean every scene is '
+            f'modern: if a scene\'s narration is about ancestors, the savannah or hunting, '
+            f'render it as that ancient setting with ancient characters. Always read each '
+            f'scene on its own and pick its setting from that scene\'s words, not the title.\n\n')
 
 
 def _character_directive(name):
@@ -436,7 +529,7 @@ def _run_batches(system, scenes_text, api_key, model, batch, progress, provider)
         listing = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(chunk))
         user = (f"Here are {len(chunk)} scenes. Write one prompt for each, "
                 f"returning a JSON array of exactly {len(chunk)} strings, in order.\n\n{listing}")
-        txt, last = None, None
+        txt, last, parsed = None, None, None
         for attempt in range(4):     # tự thử lại khi lỗi tạm thời (429/500/503)
             models_try = ([chosen] if chosen else []) + [m for m in order if m != chosen]
             for m in models_try:
@@ -449,13 +542,27 @@ def _run_batches(system, scenes_text, api_key, model, batch, progress, provider)
                     if e.code in (404, 429, 500, 503):
                         continue
                     raise RuntimeError(_friendly(e))
-            if txt is not None:
+            if txt is None:
+                chosen = None
+                time.sleep(2 * (attempt + 1))
+                continue
+            # Parse kết quả + kiểm tra prompt rỗng
+            candidate = _parse_array(txt, len(chunk))
+            empty_idx = [i + 1 for i, p in enumerate(candidate) if not p.strip()]
+            if not empty_idx or attempt == 3:
+                # Không có rỗng, hoặc đã hết lượt retry -> chấp nhận
+                if empty_idx:
+                    print(f"  ⚠️  Batch cảnh {start+1}–{start+len(chunk)}: "
+                          f"prompt RỖNG tại vị trí {empty_idx} (hết retry)", file=sys.stderr)
+                parsed = candidate
                 break
-            chosen = None
-            time.sleep(2 * (attempt + 1))
-        if txt is None:
-            raise RuntimeError(_friendly(last))
-        out.extend(_parse_array(txt, len(chunk)))
+            # Còn prompt rỗng + còn lượt retry -> thử lại batch này
+            print(f"  ⚠️  Batch cảnh {start+1}–{start+len(chunk)}: "
+                  f"prompt RỖNG tại vị trí {empty_idx}, retry ({attempt+1}/3)...", file=sys.stderr)
+            time.sleep(2)
+        if parsed is None:
+            raise RuntimeError(_friendly(last) if last else "Không sinh được prompt.")
+        out.extend(parsed)
         if progress:
             progress(min(start + batch, n), n)
     return out
@@ -463,7 +570,7 @@ def _run_batches(system, scenes_text, api_key, model, batch, progress, provider)
 
 def generate_prompts(scenes_text, style, api_key, model=None,
                      batch=None, progress=None, mode="video", embed_style=True,
-                     style_mode=None, provider="gemini", character=""):
+                     style_mode=None, provider="gemini", character="", title=""):
     """
     scenes_text : list[str] — lời nói của từng cảnh, theo thứ tự.
     style       : str       — Visual Style Profile của kênh.
@@ -509,12 +616,14 @@ def generate_prompts(scenes_text, style, api_key, model=None,
         else:
             system = SYSTEM_CONTENT_IMAGE if mode == "image" else SYSTEM_CONTENT_VIDEO
     system = _inject_character(system, character)   # nếu có nhân vật chính
+    system = _title_context(title) + system         # tiêu đề video → ngữ cảnh tổng thể
     out = _run_batches(system, scenes_text, api_key, model, batch, progress, provider)
 
-    # Hậu xử lý: dọn tên key rò rỉ + ghép câu ART-STYLE cố định vào đầu mỗi prompt.
+    # Hậu xử lý: dọn tên key rò rỉ (scene_mode + character) + ghép câu ART-STYLE.
+    leak_keys = mode_keys + _character_keys(style)
     result = []
     for p in out:
-        p = _strip_mode_keys((p or "").strip(), mode_keys)
+        p = _strip_mode_keys((p or "").strip(), leak_keys)
         if caption and p:
             p = f"{caption} {p}"
         result.append(p)
@@ -537,7 +646,7 @@ Return ONLY a JSON array of strings, exactly one per scene, in the SAME ORDER. N
 
 
 def generate_motion_prompts(scenes_text, api_key, model=None, batch=None,
-                            progress=None, provider="gemini", character=""):
+                            progress=None, provider="gemini", character="", title=""):
     """Sinh prompt CHUYỂN ĐỘNG cho image-to-video (1 dòng/cảnh, chỉ camera + hành động)."""
     if not api_key or not api_key.strip():
         raise RuntimeError("Chưa nhập API key (vào tab Cài đặt).")
@@ -546,6 +655,6 @@ def generate_motion_prompts(scenes_text, api_key, model=None, batch=None,
     api_key = api_key.strip()
     char = (f'If the main character "{character.strip()}" appears, you may use the name in '
             f"the action.") if (character and character.strip()) else ""
-    system = SYSTEM_MOTION.format(char=char)
+    system = _title_context(title) + SYSTEM_MOTION.format(char=char)
     out = _run_batches(system, scenes_text, api_key, model, batch, progress, provider)
     return [(p or "").strip() for p in out]

@@ -191,6 +191,20 @@ def dflt(*parts):
     return os.path.join(HERE, *parts)
 
 
+def _extract_title_from_srt(path):
+    """Lấy tiêu đề video từ tên file SRT.
+    Xử lý: bỏ timestamp, bỏ hậu tố thừa (_Script/_Final/...), đổi _ thành dấu cách."""
+    import re
+    name = os.path.splitext(os.path.basename(path or ""))[0]
+    # 1) Bỏ timestamp _YYYYMMDD_HHMMSS ở cuối (Clone Voice tự thêm)
+    name = re.sub(r'[_\s]*\d{8}[_\s]*\d{6}$', '', name).strip()
+    # 2) Bỏ hậu tố thường gặp không thuộc tiêu đề (không phân biệt hoa/thường)
+    name = re.sub(r'[\s_]*(Script|Final|Draft|Edit|v\d+|SRT)$', '', name, flags=re.IGNORECASE).strip()
+    # 3) Thay _ bằng dấu cách (tên file kiểu Why_You_Cant_Stop)
+    name = name.replace('_', ' ').strip()
+    return name
+
+
 class App:
     def __init__(self, root):
         self.root = root
@@ -202,6 +216,7 @@ class App:
 
         # Biến nguyên liệu DÙNG CHUNG giữa các trang (SRT dùng cho cả Prompt lẫn Render)
         self.srt = tk.StringVar(value=dflt("input", "subtitle.srt"))
+        self.video_title = tk.StringVar(value=_extract_title_from_srt(dflt("input", "subtitle.srt")))
         self.images = tk.StringVar(value=dflt("input", "images"))
         self.voice = tk.StringVar(value=self._auto_voice())
         self.out = tk.StringVar(value=dflt("output", "final.mp4"))
@@ -209,6 +224,9 @@ class App:
         self.kenburns = tk.BooleanVar(value=True)
         self.subs = tk.BooleanVar(value=True)
         self.crossfade = tk.BooleanVar(value=False)
+
+        # Tự cập nhật tiêu đề khi Boss chọn file SRT khác
+        self.srt.trace_add("write", self._on_srt_change)
 
         # Khung trên: SIDEBAR trái + nội dung phải
         top = ttk.Frame(root)
@@ -266,6 +284,13 @@ class App:
         f1.pack(fill="x", padx=8, pady=6)
         self._row(f1, "File PHỤ ĐỀ (SRT):", self.srt, lambda: self._pick_file(
             self.srt, [("SRT", "*.srt"), ("Tất cả", "*.*")]))
+
+        title_row = ttk.Frame(f1)
+        title_row.pack(fill="x", padx=8, pady=3)
+        ttk.Label(title_row, text="📌 Tiêu đề video:", width=18).pack(side="left")
+        ttk.Entry(title_row, textvariable=self.video_title).pack(side="left", fill="x", expand=True)
+        ttk.Label(title_row, foreground="#888",
+                  text="(tự điền từ tên SRT — có thể sửa)").pack(side="left", padx=6)
 
         sf = ttk.Frame(f1)
         sf.pack(fill="x", padx=8, pady=3)
@@ -483,6 +508,13 @@ class App:
             if os.path.isfile(p):
                 return p
         return ""
+
+    def _on_srt_change(self, *_):
+        """Tự điền tiêu đề từ tên file SRT khi Boss chọn file mới."""
+        path = self.srt.get()
+        t = _extract_title_from_srt(path)
+        if t:
+            self.video_title.set(t)
 
     def _pick_dir(self):
         d = filedialog.askdirectory(initialdir=HERE)
@@ -767,6 +799,7 @@ class App:
         key = self.cfg.get("keys", {}).get(prov, "")
         smode = self.style_mode.get()
         character = self.main_char.get().strip()
+        title = self.video_title.get().strip()
         self.cfg["main_character"] = character
         save_config(self.cfg)
         if not key.strip():
@@ -827,10 +860,11 @@ class App:
                     self.q.put(("line", "• (1/2) Viết prompt ẢNH keyframe...\n"))
                     img_prompts = ai_prompts.generate_prompts(
                         texts, style, key, model=model, progress=prog, mode="image",
-                        style_mode=smode, provider=prov, character=character)
+                        style_mode=smode, provider=prov, character=character, title=title)
                     self.q.put(("line", "• (2/2) Viết prompt CHUYỂN ĐỘNG...\n"))
                     motion = ai_prompts.generate_motion_prompts(
-                        texts, key, model=model, progress=prog, provider=prov, character=character)
+                        texts, key, model=model, progress=prog, provider=prov,
+                        character=character, title=title)
                     ip, mp = dflt("image_prompts.txt"), dflt("motion_prompts.txt")
                     with open(ip, "w", encoding="utf-8") as f:
                         f.write("\n".join(p.replace("\n", " ").strip() for p in img_prompts) + "\n")
@@ -850,7 +884,7 @@ class App:
                                         f"Gọi {prov} viết prompt {loai} [{kieu}]...\n"))
                     prompts = ai_prompts.generate_prompts(
                         texts, style, key, model=model, progress=prog, mode=mode,
-                        style_mode=smode, provider=prov, character=character)
+                        style_mode=smode, provider=prov, character=character, title=title)
                     vp = dflt("veo_prompts.txt")
                     with open(vp, "w", encoding="utf-8") as f:
                         f.write("\n".join(p.replace("\n", " ").strip() for p in prompts) + "\n")
