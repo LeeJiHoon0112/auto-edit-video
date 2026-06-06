@@ -256,8 +256,14 @@ def build_clip(media, duration, out_path, kenburns=True, index=0, clip_fit="auto
 # ----------------------------------------------------------------------------
 # Crossfade (chỉ giữa các ẢNH liên tiếp) + nối các đoạn
 # ----------------------------------------------------------------------------
-def xfade_group(clip_paths, lens, dur, out_path):
-    """Nối 1 nhóm ảnh bằng crossfade (xfade). lens = độ dài render mỗi clip."""
+# Số ảnh tối đa mỗi lệnh xfade. Nhóm lớn hơn -> chia cụm để dòng lệnh ffmpeg KHÔNG
+# vượt giới hạn ~32K ký tự của Windows (gây WinError 206 khi render video toàn ảnh tĩnh).
+XFADE_CHUNK = 20
+_XF_SEQ = [0]            # bộ đếm tạo tên file segment xfade DUY NHẤT (tránh trùng khi đệ quy)
+
+
+def _xfade_chain(clip_paths, lens, dur, out_path):
+    """Crossfade 1 cụm NHỎ (<= XFADE_CHUNK ảnh) trong đúng 1 lệnh ffmpeg."""
     inputs = []
     for p in clip_paths:
         inputs += ["-i", p]
@@ -275,6 +281,33 @@ def xfade_group(clip_paths, lens, dur, out_path):
            "-map", prev, "-r", str(int(FPS)), "-c:v", "libx264",
            "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p", out_path]
     run(cmd)
+
+
+def xfade_group(clip_paths, lens, dur, out_path):
+    """Nối 1 nhóm ảnh bằng crossfade. Nhóm LỚN -> chia thành các cụm <= XFADE_CHUNK,
+    crossfade từng cụm ra segment (mỗi segment giữ phần "đuôi" thừa để crossfade tiếp),
+    rồi crossfade CÁC SEGMENT với nhau -> liền mạch, không lệch thời lượng, không vượt
+    giới hạn dòng lệnh Windows. lens = độ dài render mỗi clip."""
+    n = len(clip_paths)
+    if n <= XFADE_CHUNK:
+        _xfade_chain(clip_paths, lens, dur, out_path)
+        return
+    tmpd = os.path.dirname(out_path)
+    segs, seg_lens, i = [], [], 0
+    while i < n:
+        j = min(i + XFADE_CHUNK, n)
+        seg = os.path.join(tmpd, f"xfseg_{_XF_SEQ[0]:05d}.mp4")
+        _XF_SEQ[0] += 1
+        if j - i == 1:
+            shutil.copyfile(clip_paths[i], seg)
+            seg_lens.append(lens[i])
+        else:
+            _xfade_chain(clip_paths[i:j], lens[i:j], dur, seg)
+            seg_lens.append(sum(lens[i:j]) - (j - i - 1) * dur)
+        segs.append(seg)
+        i = j
+    # Crossfade các segment với nhau (số segment nhỏ -> đệ quy 1 lần là đủ)
+    xfade_group(segs, seg_lens, dur, out_path)
 
 
 def concat_copy(paths, out_path, tmp):
