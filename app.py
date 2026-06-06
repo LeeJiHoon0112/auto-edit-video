@@ -50,6 +50,7 @@ def default_config():
         "produce": "video",                         # image | video | i2v (kiểu sản xuất)
         "style_mode": "in_prompt",
         "main_character": "",
+        "prompt_dir": "",                           # thư mục lưu prompt+scenes (trống=gốc)
         "queue": [],
     }
 
@@ -224,6 +225,8 @@ class App:
         self.kenburns = tk.BooleanVar(value=True)
         self.subs = tk.BooleanVar(value=True)
         self.crossfade = tk.BooleanVar(value=False)
+        # Thư mục lưu prompt + scenes.csv (TÙY CHỌN). Trống = lưu ở gốc dự án (đè như cũ).
+        self.prompt_dir = tk.StringVar(value=self.cfg.get("prompt_dir", ""))
 
         # Tự cập nhật tiêu đề khi Boss chọn file SRT khác
         self.srt.trace_add("write", self._on_srt_change)
@@ -291,6 +294,16 @@ class App:
         ttk.Entry(title_row, textvariable=self.video_title).pack(side="left", fill="x", expand=True)
         ttk.Label(title_row, foreground="#888",
                   text="(tự điền từ tên SRT — có thể sửa)").pack(side="left", padx=6)
+
+        pdir = ttk.Frame(f1)
+        pdir.pack(fill="x", padx=8, pady=3)
+        ttk.Label(pdir, text="📁 Thư mục lưu prompt:", width=18).pack(side="left")
+        ttk.Entry(pdir, textvariable=self.prompt_dir).pack(side="left", fill="x", expand=True)
+        ttk.Button(pdir, text="Chọn...", command=self._pick_prompt_dir, width=8).pack(side="left", padx=4)
+        ttk.Label(f1, foreground="#888", wraplength=640,
+                  text="(Tùy chọn) Mỗi video 1 thư mục riêng → prompt + scenes.csv không đè nhau, "
+                       "render lại khỏi tốn API. Để TRỐNG = lưu ở gốc (đè như cũ).").pack(
+            fill="x", padx=12, pady=(0, 2))
 
         sf = ttk.Frame(f1)
         sf.pack(fill="x", padx=8, pady=3)
@@ -398,7 +411,9 @@ class App:
             fill="x", padx=12, pady=(0, 4))
 
     def _open_prompts(self):
-        p = dflt("veo_prompts.txt")
+        p = self._out_path("veo_prompts.txt")
+        if not os.path.isfile(p):
+            p = dflt("veo_prompts.txt")          # fallback bản ở gốc
         if os.path.isfile(p):
             os.startfile(p)
         else:
@@ -515,6 +530,28 @@ class App:
         t = _extract_title_from_srt(path)
         if t:
             self.video_title.set(t)
+
+    def _prompt_base(self):
+        """Thư mục lưu prompt + scenes.csv. User chọn thư mục hợp lệ -> dùng nó (mỗi
+        video 1 thư mục riêng, không đè nhau). Trống/không hợp lệ -> gốc dự án (đè như cũ)."""
+        d = (self.prompt_dir.get() or "").strip()
+        if d and os.path.isdir(d):
+            return d
+        return HERE
+
+    def _out_path(self, name):
+        """Đường dẫn file output (prompt/scenes) theo thư mục lưu đã chọn."""
+        return os.path.join(self._prompt_base(), name)
+
+    def _save_prompt_dir(self):
+        self.cfg["prompt_dir"] = self.prompt_dir.get().strip()
+        save_config(self.cfg)
+
+    def _pick_prompt_dir(self):
+        d = filedialog.askdirectory(initialdir=self._prompt_base())
+        if d:
+            self.prompt_dir.set(d)
+            self._save_prompt_dir()
 
     def _pick_dir(self):
         d = filedialog.askdirectory(initialdir=HERE)
@@ -800,6 +837,8 @@ class App:
         smode = self.style_mode.get()
         character = self.main_char.get().strip()
         title = self.video_title.get().strip()
+        base_dir = self._prompt_base()          # thư mục lưu prompt + scenes.csv
+        self._save_prompt_dir()
         self.cfg["main_character"] = character
         save_config(self.cfg)
         if not key.strip():
@@ -837,7 +876,7 @@ class App:
                     self.q.put(("line", f"   ...{done}/{total}\n"))
 
                 def write_scenes(img_prompts, motion=None):
-                    sc = dflt("scenes.csv")
+                    sc = os.path.join(base_dir, "scenes.csv")
                     cols = ["scene", "start", "end", "dur", "veo_sec", "speed", "text", "prompt"]
                     if motion is not None:
                         cols.append("motion")
@@ -865,7 +904,8 @@ class App:
                     motion = ai_prompts.generate_motion_prompts(
                         texts, key, model=model, progress=prog, provider=prov,
                         character=character, title=title)
-                    ip, mp = dflt("image_prompts.txt"), dflt("motion_prompts.txt")
+                    ip = os.path.join(base_dir, "image_prompts.txt")
+                    mp = os.path.join(base_dir, "motion_prompts.txt")
                     with open(ip, "w", encoding="utf-8") as f:
                         f.write("\n".join(p.replace("\n", " ").strip() for p in img_prompts) + "\n")
                     with open(mp, "w", encoding="utf-8") as f:
@@ -885,7 +925,7 @@ class App:
                     prompts = ai_prompts.generate_prompts(
                         texts, style, key, model=model, progress=prog, mode=mode,
                         style_mode=smode, provider=prov, character=character, title=title)
-                    vp = dflt("veo_prompts.txt")
+                    vp = os.path.join(base_dir, "veo_prompts.txt")
                     with open(vp, "w", encoding="utf-8") as f:
                         f.write("\n".join(p.replace("\n", " ").strip() for p in prompts) + "\n")
                     sc = write_scenes(prompts)
@@ -906,7 +946,11 @@ class App:
             messagebox.showwarning("Thiếu", "Chưa chọn thư mục ảnh/clip.")
             return
         job = self._current_job()
-        sc = dflt("scenes.csv")
+        # Ưu tiên scenes.csv ở thư mục lưu prompt đã chọn (mỗi video 1 bản riêng);
+        # không có thì dùng bản ở gốc dự án.
+        sc = os.path.join(self._prompt_base(), "scenes.csv")
+        if not os.path.isfile(sc):
+            sc = dflt("scenes.csv")
         if os.path.isfile(sc):
             job["scenes"] = sc
         cmd = self._job_cmd(job)
