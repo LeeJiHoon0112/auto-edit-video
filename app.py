@@ -345,7 +345,7 @@ class App:
         self.main_char = tk.StringVar(value=self.cfg.get("main_character", ""))
         ttk.Entry(linec, textvariable=self.main_char, width=24).pack(side="left", padx=6)
         ttk.Label(linec, foreground="#888",
-                  text="(TRỐNG nếu không có; NHIỀU nhân vật cách nhau dấu phẩy: Kha, Lan)"
+                  text="(TRỐNG nếu không có; NHIỀU nhân vật cách nhau dấu phẩy: Kha, Thảo)"
                   ).pack(side="left")
 
         f2 = ttk.LabelFrame(parent, text="Tùy chọn prompt")
