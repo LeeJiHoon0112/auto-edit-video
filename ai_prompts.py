@@ -658,3 +658,52 @@ def generate_motion_prompts(scenes_text, api_key, model=None, batch=None,
     system = _title_context(title) + SYSTEM_MOTION.format(char=char)
     out = _run_batches(system, scenes_text, api_key, model, batch, progress, provider)
     return [(p or "").strip() for p in out]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# QC KHỚP NGHĨA: đối chiếu lời thoại từng cảnh ↔ mô tả cảnh -> tìm cảnh lệch nghĩa
+# ─────────────────────────────────────────────────────────────────────────────
+SYSTEM_QC = ("You are a video QC assistant. For each scene you get the NARRATION (what the "
+"viewer HEARS) and the IMAGE description (what they SEE). Judge whether the image "
+"MEANINGFULLY illustrates the narration so a viewer would understand. Return ONLY a JSON "
+'array, one object per scene: {"scene": <int>, "verdict": "good|weak|off", '
+'"reason": "<short reason in Vietnamese>"}. good=khớp rõ, weak=tạm/chung chung, off=lệch nghĩa.')
+
+
+def qc_scene_match(scenes, api_key, model=None, provider="gemini", batch=25, progress=None):
+    """Đối chiếu khớp nghĩa. scenes: list[{'scene','text','prompt'}].
+    Trả list[{scene, verdict(good|weak|off), reason}]. Tự đổi model nếu 429/404."""
+    if not api_key or not api_key.strip():
+        raise RuntimeError("Chưa nhập API key (vào tab Cài đặt).")
+    api_key = api_key.strip()
+    pref = MODELS.get(provider, MODELS["gemini"])
+    order = ([model] if model else []) + [m for m in pref if m != model]
+    out, chosen, n = [], None, len(scenes)
+    for start in range(0, n, batch):
+        chunk = scenes[start:start + batch]
+        listing = "\n".join(
+            f'{s["scene"]}. NARRATION: {s["text"]}\n   IMAGE: {s["prompt"]}' for s in chunk)
+        user = f"Judge these scenes:\n\n{listing}"
+        txt, last = None, None
+        models_try = ([chosen] if chosen else []) + [m for m in order if m != chosen]
+        for m in models_try:
+            try:
+                txt = _call(provider, api_key, m, SYSTEM_QC, user)
+                chosen = m
+                break
+            except GeminiError as e:
+                last = e
+                if e.code in (404, 429, 500, 503):
+                    continue
+                raise RuntimeError(_friendly(e))
+        if txt is None:
+            raise RuntimeError(_friendly(last) if last else "QC lỗi.")
+        mt = re.search(r"\[.*\]", txt, re.S)
+        if mt:
+            try:
+                out += json.loads(mt.group(0))
+            except Exception:  # noqa
+                pass
+        if progress:
+            progress(min(start + batch, n), n)
+    return out

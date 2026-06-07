@@ -46,12 +46,53 @@ IMG_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".webm")
 AUDIO_NAMES = ("voice.mp3", "voice.wav", "voice.m4a", "voiceover.mp3", "voiceover.wav")
 
-# Style phụ đề (cú pháp ASS force_style). &HAABBGGRR (AA=alpha, 00=đục).
-SUB_STYLE = (
-    "FontName=Arial,Fontsize=22,Bold=1,"
-    "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,"
-    "Outline=2,Shadow=1,Alignment=2,MarginV=60"
-)
+# Phụ đề: tạo file ASS có PlayResX/Y = đúng kích thước video -> mọi giá trị tính bằng
+# PIXEL THẬT (không bị libass scale theo thang 288 gây phụ đề trôi lên giữa màn hình).
+# Kiểu "quân sự/tài liệu": IN HOA, chữ trắng to đậm khối, viền đen DÀY + bóng.
+SUB_FONT = "Arial Black"   # font đậm khối; nếu máy không có sẽ tự về Arial
+SUB_SIZE = 52              # cỡ chữ (pixel thật trên video 1080p)
+SUB_OUTLINE = 4            # độ dày viền đen (px)
+SUB_SHADOW = 2             # độ đổ bóng (px)
+SUB_MARGIN_V = 70          # khoảng cách từ ĐÁY lên (px) — số NHỎ = sát đáy hơn
+SUB_UPPERCASE = True       # IN HOA toàn bộ phụ đề (False = giữ hoa/thường)
+
+
+def _ass_time(t):
+    """Giây -> 'H:MM:SS.cc' (centisecond) cho file ASS."""
+    h = int(t // 3600); m = int(t % 3600 // 60); s = t % 60
+    return f"{h}:{m:02d}:{int(s):02d}.{int(round((s - int(s)) * 100)):02d}"
+
+
+def _write_ass(srt_path, ass_path, width, height):
+    """Chuyển SRT -> ASS với PlayResX/Y = kích thước video (pixel thật).
+    Phụ đề canh GIỮA-DƯỚI, IN HOA (nếu bật), chữ trắng viền đen dày + bóng."""
+    segs = parse_srt(srt_path)
+    bold = -1
+    style = (f"Style: Default,{SUB_FONT},{SUB_SIZE},"
+             f"&H00FFFFFF,&H000000FF,&H00000000,&H80000000,"
+             f"{bold},0,0,0,100,100,0,0,1,{SUB_OUTLINE},{SUB_SHADOW},"
+             f"2,60,60,{SUB_MARGIN_V},1")
+    head = (
+        "[Script Info]\nScriptType: v4.00+\nWrapStyle: 0\n"
+        f"PlayResX: {width}\nPlayResY: {height}\nScaledBorderAndShadow: yes\n\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
+        "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, "
+        "ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, "
+        "MarginL, MarginR, MarginV, Encoding\n" + style + "\n\n"
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, "
+        "Effect, Text\n"
+    )
+    lines = [head]
+    for s in segs:
+        txt = " ".join(s["text"].split())            # gộp về 1 dòng, bỏ xuống dòng
+        if SUB_UPPERCASE:
+            txt = txt.upper()
+        lines.append(f"Dialogue: 0,{_ass_time(s['start'])},{_ass_time(s['end'])},"
+                     f"Default,,0,0,0,,{txt}\n")
+    with open(ass_path, "w", encoding="utf-8") as f:
+        f.write("".join(lines))
 
 
 # ----------------------------------------------------------------------------
@@ -478,11 +519,12 @@ def main():
         vf = None
         cwd = None
         if not args.no_subtitles:
-            # Copy SRT vào temp tên ascii để tránh lỗi escape path trên Windows
-            subs = os.path.join(tmp, "subs.srt")
-            shutil.copyfile(args.srt, subs)
+            # Tạo ASS (tên ascii, đặt trong temp) với PlayResX/Y = kích thước video
+            # -> phụ đề canh đúng pixel thật, không trôi lên giữa.
+            subs = os.path.join(tmp, "subs.ass")
+            _write_ass(args.srt, subs, WIDTH, HEIGHT)
             cwd = tmp                       # chạy ffmpeg trong temp -> path tương đối
-            vf = f"subtitles=subs.srt:charenc=UTF-8:force_style='{SUB_STYLE}'"
+            vf = "subtitles=subs.ass"
 
         if vf:
             cmd += ["-vf", vf]

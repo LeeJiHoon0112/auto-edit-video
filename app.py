@@ -227,6 +227,9 @@ class App:
         self.crossfade = tk.BooleanVar(value=False)
         # Thư mục lưu prompt + scenes.csv (TÙY CHỌN). Trống = lưu ở gốc dự án (đè như cũ).
         self.prompt_dir = tk.StringVar(value=self.cfg.get("prompt_dir", ""))
+        # File bảng cảnh scenes.csv CHỌN TAY (TÙY CHỌN). Trống = tự tìm. Chọn để chắc
+        # render ĐÚNG bảng cảnh của video (tránh dùng nhầm bảng cảnh video khác).
+        self.scenes_file = tk.StringVar(value="")
 
         # Tự cập nhật tiêu đề khi Boss chọn file SRT khác
         self.srt.trace_add("write", self._on_srt_change)
@@ -273,6 +276,26 @@ class App:
 
         self._show_page("prompt")
         self.root.after(100, self._drain)
+
+        # Theo dõi tiến trình render để bảo vệ khi đóng app giữa chừng (#8)
+        self.render_procs = []          # các subprocess render đang chạy
+        self.rendering = False
+        root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _on_close(self):
+        """Đóng app: nếu đang render thì hỏi xác nhận + dừng sạch tiến trình."""
+        if self.rendering:
+            if not messagebox.askyesno(
+                    "Đang render",
+                    "Đang render dở. Thoát bây giờ sẽ HỦY render (video chưa hoàn chỉnh, "
+                    "phải làm lại từ đầu).\n\nVẫn thoát?"):
+                return
+            for p in list(self.render_procs):
+                try:
+                    p.kill()
+                except Exception:  # noqa
+                    pass
+        self.root.destroy()
 
     def _show_page(self, name):
         for p in self.pages.values():
@@ -385,7 +408,12 @@ class App:
         self._row(f1, "Thư mục ẢNH/CLIP:", self.images, self._pick_dir)
         self._row(f1, "File VOICEOVER:", self.voice, lambda: self._pick_file(
             self.voice, [("Audio", "*.mp3 *.wav *.m4a *.aac"), ("Tất cả", "*.*")]))
+        self._row(f1, "📋 File bảng cảnh:", self.scenes_file, self._pick_scenes_file)
         self._row(f1, "Xuất ra MP4:", self.out, self._pick_save)
+        ttk.Label(f1, foreground="#888", wraplength=640,
+                  text="📋 File bảng cảnh (scenes.csv): để TRỐNG = tự tìm. NÊN CHỌN đúng "
+                       "scenes.csv của video này để render khớp tiếng (tránh dùng nhầm bảng "
+                       "cảnh video khác → cảnh lệch audio).").pack(fill="x", padx=12, pady=(0, 2))
 
         f2 = ttk.LabelFrame(parent, text="Tùy chọn ghép")
         f2.pack(fill="x", padx=8, pady=6)
@@ -402,6 +430,9 @@ class App:
         self.btn_render.pack(side="left", padx=4)
         ttk.Button(bar, text="➕ Thêm vào Hàng đợi",
                    command=self.add_to_queue).pack(side="left", padx=4)
+        self.btn_qc = ttk.Button(bar, text="🔍 Kiểm tra khớp nghĩa",
+                                 command=self.run_qc_match)
+        self.btn_qc.pack(side="left", padx=4)
         ttk.Button(bar, text="📂 Mở thư mục xuất",
                    command=self.open_out).pack(side="right", padx=4)
 
@@ -504,10 +535,38 @@ class App:
         ttk.Label(right, text="Nội dung style (dán mô tả phong cách kênh):").pack(anchor="w")
         self.txt_style = tk.Text(right, wrap="word", height=12)
         self.txt_style.pack(fill="both", expand=True)
-        ttk.Button(right, text="💾 Lưu profile này",
-                   command=self._profile_save).pack(anchor="e", pady=4)
+        brow = ttk.Frame(right)
+        brow.pack(anchor="e", pady=4)
+        ttk.Button(brow, text="👁️ Xem trước style",
+                   command=self._preview_style).pack(side="left", padx=4)
+        ttk.Button(brow, text="💾 Lưu profile này",
+                   command=self._profile_save).pack(side="left")
 
         self._refresh_profile_list()
+
+    def _preview_style(self):
+        """Hiện câu NÉT tool sẽ ghép vào mỗi prompt + cảnh báo nếu profile sai cấu trúc.
+        Giúp bạn bè TỰ kiểm JSON mà không cần render thử (#10)."""
+        import ai_prompts
+        style = self.txt_style.get("1.0", "end").strip()
+        if not style:
+            messagebox.showinfo("Xem trước style", "Profile đang trống.")
+            return
+        cap = ai_prompts._style_caption(style)
+        if not cap.strip():
+            messagebox.showwarning(
+                "Xem trước style",
+                "⚠️ Profile này KHÔNG sinh được câu NÉT nào!\n\n"
+                "Prompt sẽ thiếu phong cách. Kiểm tra lại — nên có các trường: "
+                "art_style, line_work, shading_lighting, mood (và scene_modes, characters).")
+            return
+        ai = ai_prompts._style_for_ai(style)
+        messagebox.showinfo(
+            "Xem trước style",
+            "✅ Câu NÉT sẽ tự ghép vào MỌI prompt:\n\n"
+            + (cap[:650] + ("..." if len(cap) > 650 else ""))
+            + "\n\n──────────\nPhần gửi AI (màu / nhân vật / bối cảnh):\n"
+            + (ai[:350] + ("..." if len(ai) > 350 else "")))
 
     # ---------- tiện ích UI chung ----------
     def _row(self, parent, label, var, cmd):
@@ -552,6 +611,24 @@ class App:
         if d:
             self.prompt_dir.set(d)
             self._save_prompt_dir()
+
+    def _scenes_path(self):
+        """File scenes.csv để render: ưu tiên file CHỌN TAY -> thư mục lưu prompt -> gốc."""
+        f = (self.scenes_file.get() or "").strip()
+        if f and os.path.isfile(f):
+            return f
+        p = os.path.join(self._prompt_base(), "scenes.csv")
+        if os.path.isfile(p):
+            return p
+        g = dflt("scenes.csv")
+        return g if os.path.isfile(g) else ""
+
+    def _pick_scenes_file(self):
+        f = filedialog.askopenfilename(
+            initialdir=self._prompt_base(),
+            filetypes=[("Bảng cảnh", "*.csv"), ("Tất cả", "*.*")])
+        if f:
+            self.scenes_file.set(f)
 
     def _pick_dir(self):
         d = filedialog.askdirectory(initialdir=HERE)
@@ -787,6 +864,8 @@ class App:
         st = "disabled" if on else "normal"
         self.btn_prompt["state"] = st
         self.btn_render["state"] = st
+        if hasattr(self, "btn_qc"):
+            self.btn_qc["state"] = st
         if hasattr(self, "btn_render_queue"):
             self.btn_render_queue["state"] = st
 
@@ -813,8 +892,14 @@ class App:
                     if prov == self.provider_var.get():
                         self._refresh_models()
                     self.status.set(f"Đã cập nhật {len(models)} model ({prov}).")
+                elif kind == "scenes_done":
+                    # Tạo prompt xong -> tự điền file bảng cảnh vừa tạo (liền mạch render)
+                    if data and os.path.isfile(data):
+                        self.scenes_file.set(data)
                 elif kind == "done":
                     self._busy(False)
+                    self.rendering = False           # hết render -> cho đóng app tự do
+                    self.render_procs.clear()
                     self.status.set(data)
                     if data.startswith("✅"):
                         messagebox.showinfo("Xong", data)
@@ -911,6 +996,7 @@ class App:
                     with open(mp, "w", encoding="utf-8") as f:
                         f.write("\n".join(p.replace("\n", " ").strip() for p in motion) + "\n")
                     sc = write_scenes(img_prompts, motion)
+                    self.q.put(("scenes_done", sc))
                     self.q.put(("line", f"\n• Đã ghi:\n   {ip}\n   {mp}\n   {sc}\n"))
                     self.q.put(("done", f"✅ Xong (Image-to-video)! {len(img_prompts)} cảnh × 2 prompt. "
                                         "Dùng image_prompts.txt tạo keyframe → motion_prompts.txt cho i2v."))
@@ -929,6 +1015,7 @@ class App:
                     with open(vp, "w", encoding="utf-8") as f:
                         f.write("\n".join(p.replace("\n", " ").strip() for p in prompts) + "\n")
                     sc = write_scenes(prompts)
+                    self.q.put(("scenes_done", sc))
                     self.q.put(("line", f"\n• Đã ghi {len(prompts)} prompt vào:\n   {vp}\n   {sc}\n"))
                     self.q.put(("done", f"✅ Xong! Đã viết {len(prompts)} prompt. "
                                         "Mở veo_prompts.txt để dán vào Veo."))
@@ -936,6 +1023,35 @@ class App:
                 self.q.put(("done", f"Lỗi: {e}"))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    # ---------- Kiểm clip hỏng trước khi render (#7) ----------
+    def _broken_clips(self, images):
+        """Quét thư mục, trả danh sách clip VIDEO hỏng (ffprobe lỗi hoặc chỉ ~1 frame).
+        Clip hỏng sẽ làm video bị HỤT thời lượng -> cảnh lệch khỏi audio."""
+        try:
+            import auto_edit as ae
+            files = ae.collect_media(images)
+        except Exception:  # noqa
+            return []
+        bad = []
+        for f in files:
+            if f.lower().endswith(ae.VIDEO_EXTS):
+                d = ae.probe_duration(f)
+                if d is None or d < 0.25:        # 1 frame ~0.04s
+                    bad.append(os.path.basename(f))
+        return bad
+
+    def _confirm_broken(self, images):
+        """True = cho render tiếp. Nếu có clip hỏng -> hỏi xác nhận."""
+        bad = self._broken_clips(images)
+        if not bad:
+            return True
+        lst = ", ".join(bad[:15]) + ("..." if len(bad) > 15 else "")
+        return messagebox.askyesno(
+            "⚠️ Clip hỏng",
+            f"Phát hiện {len(bad)} clip VIDEO hỏng (lỗi/chỉ 1 khung hình):\n\n{lst}\n\n"
+            "Các clip này sẽ làm video BỊ HỤT thời lượng → cảnh lệch khỏi tiếng.\n"
+            "Nên thay bằng clip tốt hoặc ảnh tĩnh (.jpg) trước.\n\nVẫn render?")
 
     # ---------- RENDER (gọi auto_edit.py) ----------
     def run_render(self):
@@ -945,19 +1061,18 @@ class App:
         if not os.path.isdir(self.images.get()):
             messagebox.showwarning("Thiếu", "Chưa chọn thư mục ảnh/clip.")
             return
+        if not self._confirm_broken(self.images.get()):
+            return
         job = self._current_job()
-        # Ưu tiên scenes.csv ở thư mục lưu prompt đã chọn (mỗi video 1 bản riêng);
-        # không có thì dùng bản ở gốc dự án.
-        sc = os.path.join(self._prompt_base(), "scenes.csv")
-        if not os.path.isfile(sc):
-            sc = dflt("scenes.csv")
-        if os.path.isfile(sc):
-            job["scenes"] = sc
+        warn = self._scenes_voice_mismatch(job.get("scenes", ""), job.get("voice", ""))
+        if warn and not messagebox.askyesno("⚠️ Bảng cảnh không khớp", warn + "\n\nVẫn render?"):
+            return
         cmd = self._job_cmd(job)
 
         self.log.delete("1.0", "end")
         self._log("$ render...\n\n")
         self._busy(True)
+        self.rendering = True
         self.status.set("Đang render...")
 
         def worker():
@@ -968,6 +1083,7 @@ class App:
                                      stderr=subprocess.STDOUT, text=True,
                                      encoding="utf-8", errors="replace", env=env,
                                      creationflags=flags)
+                self.render_procs.append(p)
                 for line in p.stdout:
                     self.q.put(("line", line))
                 p.wait()
@@ -980,13 +1096,60 @@ class App:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    # ---------- QC khớp nghĩa: clip có đúng ý lời thoại không (#9) ----------
+    def run_qc_match(self):
+        sc = os.path.join(self._prompt_base(), "scenes.csv")
+        if not os.path.isfile(sc):
+            sc = dflt("scenes.csv")
+        if not os.path.isfile(sc):
+            messagebox.showwarning("Thiếu", "Chưa có scenes.csv — bấm TẠO PROMPT trước.")
+            return
+        prov = self.cfg.get("provider", "gemini")
+        key = self.cfg.get("keys", {}).get(prov, "")
+        if not key.strip():
+            messagebox.showwarning("Thiếu API key", f"Vào Cài đặt nhập key cho '{prov}'.")
+            return
+        model = self.cfg.get("models", {}).get(prov)
+        import csv
+        rows = list(csv.DictReader(open(sc, encoding="utf-8-sig")))
+        scenes = [{"scene": r.get("scene"), "text": r.get("text", ""),
+                   "prompt": r.get("prompt", "")} for r in rows]
+
+        self.log.delete("1.0", "end")
+        self._busy(True)
+        self.status.set("Đang kiểm khớp nghĩa (clip vs lời thoại)...")
+        self.q.put(("line", f"• Kiểm {len(scenes)} cảnh bằng {prov}...\n"))
+
+        def worker():
+            try:
+                import ai_prompts
+                def prog(d, t):
+                    self.q.put(("line", f"   ...đã kiểm {d}/{t}\n"))
+                res = ai_prompts.qc_scene_match(scenes, key, model=model,
+                                                provider=prov, progress=prog)
+                good = [d for d in res if d.get("verdict") == "good"]
+                weak = [d for d in res if d.get("verdict") == "weak"]
+                off = [d for d in res if d.get("verdict") == "off"]
+                self.q.put(("line", f"\n===== KẾT QUẢ: ✅{len(good)} khớp | 🟡{len(weak)} yếu | "
+                                    f"❌{len(off)} lệch =====\n"))
+                for d in off:
+                    self.q.put(("line", f"  ❌ Cảnh {d.get('scene')}: {d.get('reason')}\n"))
+                for d in weak:
+                    self.q.put(("line", f"  🟡 Cảnh {d.get('scene')}: {d.get('reason')}\n"))
+                self.q.put(("done", f"✅ QC xong: {len(good)} khớp, {len(weak)} yếu, "
+                                    f"{len(off)} lệch nghĩa (chi tiết ở nhật ký)."))
+            except Exception as e:  # noqa
+                self.q.put(("done", f"Lỗi QC: {e}"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
     # ============================ HÀNG ĐỢI ============================
     def _current_job(self):
         """Gói nguyên liệu đang chọn ở tab Làm video thành 1 'job' để render."""
         return {
             "out": self.out.get(), "srt": self.srt.get(),
             "images": self.images.get(), "voice": self.voice.get(),
-            "scenes": "", "secs": self.secs.get(),
+            "scenes": self._scenes_path(), "secs": self.secs.get(),
             "kenburns": self.kenburns.get(), "subs": self.subs.get(),
             "crossfade": self.crossfade.get(),
         }
@@ -1017,9 +1180,13 @@ class App:
             messagebox.showwarning("Thiếu", "Chưa chọn thư mục ảnh/clip.")
             return
         job = self._current_job()
-        # Lưu BẢN SAO scenes.csv hiện tại (nếu có) -> tránh bị ghi đè khi tạo prompt video khác
-        sc = dflt("scenes.csv")
-        if os.path.isfile(sc):
+        # CẢNH BÁO nếu bảng cảnh không khớp voice (dễ là dùng nhầm scenes video khác)
+        warn = self._scenes_voice_mismatch(job.get("scenes", ""), job.get("voice", ""))
+        if warn and not messagebox.askyesno("⚠️ Bảng cảnh không khớp", warn + "\n\nVẫn thêm?"):
+            return
+        # Lưu BẢN SAO scenes.csv ĐÃ CHỌN (snapshot) -> tránh bị ghi đè khi tạo prompt video khác
+        sc = job.get("scenes", "")
+        if sc and os.path.isfile(sc):
             qdir = dflt("queue")
             os.makedirs(qdir, exist_ok=True)
             base = os.path.splitext(os.path.basename(job["out"]))[0] or "job"
@@ -1033,6 +1200,25 @@ class App:
         save_config(self.cfg)
         self._refresh_queue()
         self.status.set(f"Đã thêm vào hàng đợi ({len(self.cfg['queue'])} video).")
+
+    def _scenes_voice_mismatch(self, scenes, voice):
+        """Trả chuỗi cảnh báo nếu tổng thời lượng scenes lệch voice >10% (dễ là nhầm
+        bảng cảnh video khác). Trả None nếu khớp / thiếu dữ liệu."""
+        if not (scenes and os.path.isfile(scenes) and voice and os.path.isfile(voice)):
+            return None
+        try:
+            import auto_edit as ae, csv
+            rows = list(csv.DictReader(open(scenes, encoding="utf-8-sig")))
+            tot = sum(float(r.get("dur", 0)) for r in rows)
+            vd = ae.probe_duration(voice) or 0
+            if vd and tot and abs(tot - vd) / vd > 0.10:
+                return (f"Bảng cảnh: {len(rows)} cảnh = {tot:.0f}s ({tot/60:.1f}′)\n"
+                        f"Voice    : {vd:.0f}s ({vd/60:.1f}′)\n\n"
+                        f"Lệch {abs(tot-vd):.0f}s — có thể đang dùng NHẦM bảng cảnh của video khác!\n"
+                        f"Nên chọn đúng scenes.csv của video này (ô '📋 File bảng cảnh').")
+        except Exception:  # noqa
+            pass
+        return None
 
     def _build_queue(self, parent):
         top = ttk.Frame(parent)
@@ -1088,8 +1274,19 @@ class App:
         if not jobs:
             messagebox.showinfo("Hàng đợi trống", "Chưa có video nào trong hàng đợi.")
             return
+        # Kiểm clip hỏng cho toàn hàng đợi (#7)
+        allbad = [(os.path.basename(j.get("out", "?")), self._broken_clips(j.get("images", "")))
+                  for j in jobs]
+        allbad = [(n, b) for n, b in allbad if b]
+        if allbad:
+            detail = "\n".join(f"  • {n}: {', '.join(b[:8])}" for n, b in allbad)
+            if not messagebox.askyesno(
+                    "⚠️ Clip hỏng trong hàng đợi",
+                    f"Có clip hỏng (lỗi/1 frame) làm video hụt:\n\n{detail}\n\nVẫn render cả hàng đợi?"):
+                return
         self.log.delete("1.0", "end")
         self._busy(True)
+        self.rendering = True
         self.status.set(f"Đang render hàng đợi (0/{len(jobs)})...")
 
         def worker():
@@ -1104,6 +1301,7 @@ class App:
                                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                          text=True, encoding="utf-8", errors="replace",
                                          env=env, creationflags=flags)
+                    self.render_procs.append(p)
                     for line in p.stdout:
                         self.q.put(("line", line))
                     p.wait()
