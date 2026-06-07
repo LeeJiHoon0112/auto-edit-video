@@ -489,19 +489,42 @@ def _title_context(title):
             f'scene on its own and pick its setting from that scene\'s words, not the title.\n\n')
 
 
+def _parse_characters(text):
+    """Tách danh sách TÊN nhân vật chính (phân cách bằng dấu phẩy / chấm phẩy / xuống dòng)."""
+    import re as _re
+    return [p.strip() for p in _re.split(r"[,;\n]+", text or "") if p.strip()]
+
+
 def _character_directive(name):
     """Chỉ thị cho AI khi video có NHÂN VẬT CHÍNH (tool video đã có ảnh tham chiếu).
+    Hỗ trợ 1 HOẶC NHIỀU nhân vật (nhập nhiều tên cách nhau bằng dấu phẩy).
     Bắt AI: gọi nhân vật bằng TÊN (để tool áp ảnh ref), KHÔNG tả ngoại hình (ref lo),
     chỉ tả HÀNH ĐỘNG + BIỂU CẢM + TƯ THẾ + góc máy, và ĐA DẠNG hoá qua các cảnh."""
-    n = name.strip()
+    names = _parse_characters(name)
+    if not names:
+        return ""
+    if len(names) == 1:
+        n = names[0]
+        return (
+            f'MAIN CHARACTER: the recurring main character is named "{n}". In EVERY scene where '
+            f'this character appears, refer to them BY THE NAME "{n}" (e.g. "{n} leans forward and '
+            f'listens") so the tool can apply the reference image. Do NOT describe {n}\'s fixed '
+            f"appearance (face, hair, clothes, body) — a reference image controls that. INSTEAD, "
+            f"for each such scene clearly state {n}'s ACTION, facial EXPRESSION/emotion, body "
+            f"POSE/gesture and camera framing, and VARY them across scenes (avoid repeating the "
+            f"same standing pose or the same expression). Scenes without {n} simply omit the name."
+        )
+    # NHIỀU nhân vật chính: AI gọi đúng tên TỪNG người khi họ xuất hiện
+    joined = ", ".join(f'"{n}"' for n in names)
     return (
-        f'MAIN CHARACTER: the recurring main character is named "{n}". In EVERY scene where '
-        f'this character appears, refer to them BY THE NAME "{n}" (e.g. "{n} leans forward and '
-        f'listens") so the tool can apply the reference image. Do NOT describe {n}\'s fixed '
-        f"appearance (face, hair, clothes, body) — a reference image controls that. INSTEAD, "
-        f"for each such scene clearly state {n}'s ACTION, facial EXPRESSION/emotion, body "
-        f"POSE/gesture and camera framing, and VARY them across scenes (avoid repeating the "
-        f"same standing pose or the same expression). Scenes without {n} simply omit the name."
+        f"MAIN CHARACTERS: this video has {len(names)} recurring main characters named {joined}. "
+        f"Each has its own reference image. In EVERY scene, refer to whichever of them appears "
+        f"BY THEIR EXACT NAME (e.g. \"{names[0]} turns to {names[1]}\") so the tool maps the right "
+        f"reference image to each. Do NOT describe their fixed appearance (face, hair, clothes, "
+        f"body) — the reference images control that. INSTEAD, for each scene state each present "
+        f"character's ACTION, facial EXPRESSION/emotion, body POSE/gesture and camera framing, and "
+        f"VARY them across scenes. Only name the characters who actually appear in that scene; "
+        f"scenes without any of them simply omit the names."
     )
 
 

@@ -343,9 +343,10 @@ class App:
         linec.pack(fill="x", padx=8, pady=3)
         ttk.Label(linec, text="🎭 Tên nhân vật chính:", width=18).pack(side="left")
         self.main_char = tk.StringVar(value=self.cfg.get("main_character", ""))
-        ttk.Entry(linec, textvariable=self.main_char, width=18).pack(side="left", padx=6)
+        ttk.Entry(linec, textvariable=self.main_char, width=24).pack(side="left", padx=6)
         ttk.Label(linec, foreground="#888",
-                  text="(để TRỐNG nếu không có nhân vật chính)").pack(side="left")
+                  text="(TRỐNG nếu không có; NHIỀU nhân vật cách nhau dấu phẩy: Kha, Lan)"
+                  ).pack(side="left")
 
         f2 = ttk.LabelFrame(parent, text="Tùy chọn prompt")
         f2.pack(fill="x", padx=8, pady=6)
