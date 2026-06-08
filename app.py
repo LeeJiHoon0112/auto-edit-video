@@ -52,6 +52,7 @@ def default_config():
         "main_character": "",
         "prompt_dir": "",                           # thư mục lưu prompt+scenes (trống=gốc)
         "queue": [],
+        "render_history": [],                       # lịch sử video đã render
     }
 
 
@@ -897,6 +898,9 @@ class App:
                     # Tạo prompt xong -> tự điền file bảng cảnh vừa tạo (liền mạch render)
                     if data and os.path.isfile(data):
                         self.scenes_file.set(data)
+                elif kind == "queue_finished":
+                    self._refresh_queue()        # cập nhật hàng đợi (đã xóa job xong)
+                    self._refresh_history()      # cập nhật lịch sử render
                 elif kind == "done":
                     self._busy(False)
                     self.rendering = False           # hết render -> cho đóng app tự do
@@ -1088,7 +1092,10 @@ class App:
                 for line in p.stdout:
                     self.q.put(("line", line))
                 p.wait()
-                if p.returncode == 0:
+                ok = (p.returncode == 0)
+                self._add_history(job.get("out", ""), ok)          # lưu lịch sử
+                self.q.put(("queue_finished", None))               # refresh list lịch sử
+                if ok:
                     self.q.put(("done", f"✅ Render xong: {self.out.get()}"))
                 else:
                     self.q.put(("done", f"Render thất bại (mã {p.returncode}). Xem nhật ký."))
@@ -1244,7 +1251,63 @@ class App:
         self.btn_render_queue = ttk.Button(bar, text="▶  RENDER CẢ HÀNG ĐỢI",
                                            command=self.run_render_queue)
         self.btn_render_queue.pack(side="right", padx=4)
+
+        # --- 📜 Lịch sử render (video đã render xong) ---
+        ttk.Separator(parent, orient="horizontal").pack(fill="x", padx=10, pady=(8, 2))
+        htop = ttk.Frame(parent)
+        htop.pack(fill="x", padx=10, pady=(2, 2))
+        ttk.Label(htop, text="📜 Lịch sử render", font=("", 10, "bold")).pack(side="left")
+        ttk.Label(htop, foreground="#777", text="(các video đã render xong)").pack(side="left", padx=6)
+        hmid = ttk.Frame(parent)
+        hmid.pack(fill="both", expand=True, padx=10, pady=2)
+        self.hlist = tk.Listbox(hmid, height=7)
+        self.hlist.pack(side="left", fill="both", expand=True)
+        self.hlist.bind("<Double-Button-1>", self._history_open)
+        hsb = ttk.Scrollbar(hmid, command=self.hlist.yview)
+        hsb.pack(side="right", fill="y")
+        self.hlist["yscrollcommand"] = hsb.set
+        hbar = ttk.Frame(parent)
+        hbar.pack(fill="x", padx=10, pady=(2, 8))
+        ttk.Button(hbar, text="📂 Mở thư mục video", command=self._history_open).pack(side="left", padx=2)
+        ttk.Button(hbar, text="🧹 Xoá lịch sử", command=self._history_clear).pack(side="left", padx=2)
+        ttk.Label(hbar, foreground="#888", text="(nháy đúp 1 dòng = mở thư mục video)").pack(side="left", padx=6)
+
         self._refresh_queue()
+        self._refresh_history()
+
+    def _add_history(self, out, ok):
+        """Ghi 1 mục vào lịch sử render (mới nhất lên đầu, giữ tối đa 100 mục)."""
+        import time as _t
+        hist = self.cfg.setdefault("render_history", [])
+        hist.insert(0, {"out": out, "time": _t.strftime("%Y-%m-%d %H:%M"), "ok": bool(ok)})
+        del hist[100:]
+        save_config(self.cfg)
+
+    def _refresh_history(self):
+        if not hasattr(self, "hlist"):
+            return
+        self.hlist.delete(0, "end")
+        for h in self.cfg.get("render_history", []):
+            icon = "✅" if h.get("ok") else "❌"
+            self.hlist.insert("end", f"{icon} {h.get('time','')}   {os.path.basename(h.get('out','?'))}")
+        if not self.cfg.get("render_history"):
+            self.hlist.insert("end", "(chưa có video nào được render)")
+
+    def _history_open(self, _e=None):
+        hist = self.cfg.get("render_history", [])
+        sel = self.hlist.curselection()
+        idx = sel[0] if sel else 0
+        if 0 <= idx < len(hist):
+            d = os.path.dirname(hist[idx].get("out", "")) or HERE
+            if os.path.isdir(d):
+                os.startfile(d)
+
+    def _history_clear(self):
+        if self.cfg.get("render_history") and messagebox.askyesno(
+                "Xoá lịch sử", "Xoá toàn bộ lịch sử render? (không xoá file video)"):
+            self.cfg["render_history"] = []
+            save_config(self.cfg)
+            self._refresh_history()
 
     def _refresh_queue(self):
         self.qlist.delete(0, "end")
@@ -1291,7 +1354,7 @@ class App:
         self.status.set(f"Đang render hàng đợi (0/{len(jobs)})...")
 
         def worker():
-            ok_count, fail = 0, []
+            ok_count, fail, done_outs = 0, [], []
             env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
             flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
             for idx, job in enumerate(jobs, 1):
@@ -1308,16 +1371,24 @@ class App:
                     p.wait()
                     if p.returncode == 0:
                         ok_count += 1
+                        done_outs.append(job.get("out", ""))
+                        self._add_history(job.get("out", ""), True)   # lưu lịch sử
                         self.q.put(("line", f"✅ Xong: {job.get('out')}\n"))
                     else:
                         fail.append(name)
+                        self._add_history(job.get("out", ""), False)
                         self.q.put(("line", f"❌ Lỗi (mã {p.returncode}): {name}\n"))
                 except Exception as e:  # noqa
                     fail.append(name)
                     self.q.put(("line", f"❌ Lỗi: {e}\n"))
+            # Xóa các job ĐÃ render thành công khỏi hàng đợi (giữ lại job lỗi để thử lại)
+            self.cfg["queue"] = [j for j in self.cfg.get("queue", [])
+                                 if j.get("out", "") not in done_outs]
+            save_config(self.cfg)
             msg = f"✅ Hàng đợi xong: {ok_count}/{len(jobs)} video"
             if fail:
-                msg += f" ({len(fail)} lỗi: {', '.join(fail)})"
+                msg += f" ({len(fail)} lỗi giữ lại để thử lại: {', '.join(fail)})"
+            self.q.put(("queue_finished", None))
             self.q.put(("done", msg))
 
         threading.Thread(target=worker, daemon=True).start()
