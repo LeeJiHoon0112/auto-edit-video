@@ -651,14 +651,19 @@ class App:
             self._save_prompt_dir()
 
     def _scenes_path(self):
-        """File scenes.csv để render: ưu tiên file CHỌN TAY -> thư mục lưu prompt -> gốc."""
+        """File scenes.csv để render + kiểm tra. Ưu tiên: ① file CHỌN TAY → ② cùng THƯ MỤC
+        CLIP (mỗi video 1 thư mục clip+scenes) → ③ thư mục lưu prompt đặt riêng → ④ gốc dự án.
+        Đặt thư mục clip TRƯỚC gốc → KHÔNG đọc nhầm scenes.csv cũ còn sót ở gốc."""
         f = (self.scenes_file.get() or "").strip()
         if f and os.path.isfile(f):
             return f
-        p = os.path.join(self._prompt_base(), "scenes.csv")
-        if os.path.isfile(p):
-            return p
-        g = dflt("scenes.csv")
+        img = (self.images.get() or "").strip()          # ② cùng thư mục clip đang chọn
+        if img and os.path.isfile(os.path.join(img, "scenes.csv")):
+            return os.path.join(img, "scenes.csv")
+        d = (self.prompt_dir.get() or "").strip()         # ③ thư mục lưu prompt (nếu đặt riêng)
+        if d and os.path.isdir(d) and os.path.isfile(os.path.join(d, "scenes.csv")):
+            return os.path.join(d, "scenes.csv")
+        g = dflt("scenes.csv")                            # ④ gốc dự án (cuối cùng)
         return g if os.path.isfile(g) else ""
 
     def _pick_scenes_file(self):
@@ -1217,11 +1222,10 @@ class App:
 
     # ---------- QC khớp nghĩa: clip có đúng ý lời thoại không (#9) ----------
     def run_qc_match(self):
-        sc = os.path.join(self._prompt_base(), "scenes.csv")
-        if not os.path.isfile(sc):
-            sc = dflt("scenes.csv")
-        if not os.path.isfile(sc):
-            messagebox.showwarning("Thiếu", "Chưa có scenes.csv — bấm TẠO PROMPT trước.")
+        sc = self._scenes_path()      # ĐỌC ĐÚNG bảng cảnh đang chọn (như khi render) — KHÔNG lấy nhầm file ở gốc
+        if not sc or not os.path.isfile(sc):
+            messagebox.showwarning("Thiếu", "Chưa có scenes.csv — chọn ô '📋 File bảng cảnh' "
+                                            "(trang Render) hoặc bấm TẠO PROMPT trước.")
             return
         prov = self.cfg.get("provider", "gemini")
         key = self.cfg.get("keys", {}).get(prov, "")
