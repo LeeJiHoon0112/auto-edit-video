@@ -17,6 +17,7 @@ import time
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
@@ -226,6 +227,13 @@ class App:
         self.kenburns = tk.BooleanVar(value=True)
         self.subs = tk.BooleanVar(value=True)
         self.crossfade = tk.BooleanVar(value=False)
+        self.transition = tk.StringVar(value="fade")   # kiểu chuyển cảnh khi bật Crossfade (#2)
+        self.color = tk.StringVar(value="none")        # màu phim (#3)
+        self.vignette = tk.BooleanVar(value=False)
+        self.grain = tk.BooleanVar(value=False)
+        self.bgm = tk.StringVar(value="")              # file nhạc nền (#4)
+        self.bgm_volume = tk.StringVar(value="0.18")
+        self.duck = tk.BooleanVar(value=True)          # tự hạ nhạc khi có lời (ducking)
         # Thư mục lưu prompt + scenes.csv (TÙY CHỌN). Trống = lưu ở gốc dự án (đè như cũ).
         self.prompt_dir = tk.StringVar(value=self.cfg.get("prompt_dir", ""))
         # File bảng cảnh scenes.csv CHỌN TAY (TÙY CHỌN). Trống = tự tìm. Chọn để chắc
@@ -425,11 +433,39 @@ class App:
                         variable=self.kenburns).pack(side="left")
         ttk.Checkbutton(line, text="Chèn phụ đề", variable=self.subs).pack(side="left", padx=14)
         ttk.Checkbutton(line, text="Crossfade ảnh", variable=self.crossfade).pack(side="left")
+        ttk.Label(line, text="kiểu:").pack(side="left", padx=(10, 2))
+        ttk.Combobox(line, width=11, state="readonly", textvariable=self.transition,
+                     values=["fade", "fadeblack", "dissolve", "slideleft", "slideright",
+                             "slideup", "wipeleft", "wiperight", "circleopen", "radial",
+                             "zoomin", "pixelize"]).pack(side="left")
+
+        # Màu phim + vignette + hạt phim (#3)
+        line2 = ttk.Frame(f2)
+        line2.pack(fill="x", padx=10, pady=(0, 8))
+        ttk.Label(line2, text="🎨 Màu phim:").pack(side="left")
+        ttk.Combobox(line2, width=11, state="readonly", textvariable=self.color,
+                     values=["none", "cinematic", "cold", "warm", "bw"]).pack(side="left", padx=(2, 12))
+        ttk.Checkbutton(line2, text="Vignette (tối góc)", variable=self.vignette).pack(side="left")
+        ttk.Checkbutton(line2, text="Hạt phim", variable=self.grain).pack(side="left", padx=12)
+
+        # Nhạc nền + ducking (#4)
+        line3 = ttk.Frame(f2)
+        line3.pack(fill="x", padx=10, pady=(0, 8))
+        ttk.Label(line3, text="🎵 Nhạc nền:").pack(side="left")
+        ttk.Entry(line3, textvariable=self.bgm, width=34).pack(side="left", padx=(2, 4))
+        ttk.Button(line3, text="Chọn...", width=8, command=self._pick_bgm).pack(side="left")
+        ttk.Label(line3, text="Âm lượng:").pack(side="left", padx=(12, 2))
+        ttk.Spinbox(line3, from_=0.0, to=1.0, increment=0.02, width=5,
+                    textvariable=self.bgm_volume).pack(side="left")
+        ttk.Checkbutton(line3, text="Tự hạ nhạc khi có lời",
+                        variable=self.duck).pack(side="left", padx=12)
 
         bar = ttk.Frame(parent)
         bar.pack(fill="x", padx=8, pady=8)
         self.btn_render = ttk.Button(bar, text="▶  RENDER VIDEO", command=self.run_render)
         self.btn_render.pack(side="left", padx=4)
+        ttk.Button(bar, text="👁️ Xem trước",
+                   command=self.run_preview).pack(side="left", padx=4)
         ttk.Button(bar, text="➕ Thêm vào Hàng đợi",
                    command=self.add_to_queue).pack(side="left", padx=4)
         self.btn_qc = ttk.Button(bar, text="🔍 Kiểm tra khớp nghĩa",
@@ -901,6 +937,17 @@ class App:
                 elif kind == "queue_finished":
                     self._refresh_queue()        # cập nhật hàng đợi (đã xóa job xong)
                     self._refresh_history()      # cập nhật lịch sử render
+                elif kind == "preview_done":
+                    self._busy(False)
+                    self.rendering = False
+                    self.render_procs.clear()
+                    path, msg = data
+                    self.status.set(msg)
+                    if path and os.path.isfile(path):
+                        try:
+                            os.startfile(path)
+                        except Exception:  # noqa
+                            pass
                 elif kind == "done":
                     self._busy(False)
                     self.rendering = False           # hết render -> cho đóng app tự do
@@ -944,6 +991,31 @@ class App:
             target = float(self.secs.get())
         except ValueError:
             target = 8.0
+
+        # ⚠️ CẢNH BÁO ĐÈ FILE: chưa chọn thư mục lưu prompt riêng -> lưu ở GỐC, ghi đè
+        # scenes.csv + prompt của video làm trước (mất nếu video đó chưa render xong).
+        # Chỉ cảnh báo khi THẬT SỰ có file sắp bị đè (gốc đã có scenes.csv) -> tránh phiền.
+        pd = (self.prompt_dir.get() or "").strip()
+        if (not pd or not os.path.isdir(pd)) and os.path.isfile(os.path.join(HERE, "scenes.csv")):
+            ans = messagebox.askyesnocancel(
+                "⚠️ Có thể ĐÈ prompt của video trước",
+                "Bạn CHƯA chọn '📁 Thư mục lưu prompt' riêng cho video này.\n\n"
+                "→ scenes.csv + prompt sẽ lưu ở thư mục GỐC và GHI ĐÈ lên file của video "
+                "làm trước đó (mất prompt cũ nếu video đó chưa render xong).\n\n"
+                "[Yes / Có]      = Chọn thư mục riêng ngay (khuyên dùng)\n"
+                "[No / Không]   = Vẫn lưu ở gốc và ghi đè\n"
+                "[Cancel / Hủy] = Dừng lại")
+            if ans is None:                       # Cancel -> dừng
+                self.status.set("Đã hủy tạo prompt.")
+                return
+            if ans:                               # Yes -> chọn thư mục riêng
+                self._pick_prompt_dir()
+                d2 = (self.prompt_dir.get() or "").strip()
+                if not (d2 and os.path.isdir(d2)):
+                    self.status.set("Chưa chọn thư mục — đã dừng tạo prompt.")
+                    return
+                base_dir = self._prompt_base()    # cập nhật lại nơi lưu (thư mục riêng)
+            # No -> giữ nguyên, cố ý ghi đè ở gốc
 
         self.log.delete("1.0", "end")
         self._busy(True)
@@ -1104,6 +1176,45 @@ class App:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    # ---------- XEM TRƯỚC nhanh (render vài cảnh đầu với hiệu ứng đang chọn) ----------
+    def run_preview(self):
+        if not os.path.isfile(self.srt.get()):
+            messagebox.showwarning("Thiếu", "Chưa chọn file SRT.")
+            return
+        if not os.path.isdir(self.images.get()):
+            messagebox.showwarning("Thiếu", "Chưa chọn thư mục ảnh/clip.")
+            return
+        prev = os.path.join(tempfile.gettempdir(), "aev_preview.mp4")
+        job = dict(self._current_job(), out=prev)
+        cmd = self._job_cmd(job, preview=True)
+
+        self.log.delete("1.0", "end")
+        self._log("$ xem trước (render vài cảnh đầu với hiệu ứng đang chọn)...\n\n")
+        self._busy(True)
+        self.rendering = True
+        self.status.set("Đang tạo xem trước...")
+
+        def worker():
+            try:
+                env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+                flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+                p = subprocess.Popen(cmd, cwd=HERE, stdout=subprocess.PIPE,
+                                     stderr=subprocess.STDOUT, text=True,
+                                     encoding="utf-8", errors="replace", env=env,
+                                     creationflags=flags)
+                self.render_procs.append(p)
+                for line in p.stdout:
+                    self.q.put(("line", line))
+                p.wait()
+                if p.returncode == 0:
+                    self.q.put(("preview_done", (prev, "✅ Xem trước xong (đã mở video).")))
+                else:
+                    self.q.put(("done", f"Xem trước thất bại (mã {p.returncode}). Xem nhật ký."))
+            except Exception as e:  # noqa
+                self.q.put(("done", f"Lỗi: {e}"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
     # ---------- QC khớp nghĩa: clip có đúng ý lời thoại không (#9) ----------
     def run_qc_match(self):
         sc = os.path.join(self._prompt_base(), "scenes.csv")
@@ -1151,6 +1262,13 @@ class App:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _pick_bgm(self):
+        p = filedialog.askopenfilename(
+            title="Chọn nhạc nền",
+            filetypes=[("Âm thanh", "*.mp3 *.wav *.m4a *.aac *.ogg"), ("Tất cả", "*.*")])
+        if p:
+            self.bgm.set(p)
+
     # ============================ HÀNG ĐỢI ============================
     def _current_job(self):
         """Gói nguyên liệu đang chọn ở tab Làm video thành 1 'job' để render."""
@@ -1159,11 +1277,14 @@ class App:
             "images": self.images.get(), "voice": self.voice.get(),
             "scenes": self._scenes_path(), "secs": self.secs.get(),
             "kenburns": self.kenburns.get(), "subs": self.subs.get(),
-            "crossfade": self.crossfade.get(),
+            "crossfade": self.crossfade.get(), "transition": self.transition.get(),
+            "color": self.color.get(), "vignette": self.vignette.get(),
+            "grain": self.grain.get(), "bgm": self.bgm.get(),
+            "bgm_volume": self.bgm_volume.get(), "duck": self.duck.get(),
         }
 
-    def _job_cmd(self, job):
-        """Dựng lệnh gọi auto_edit.py cho 1 job (dùng chung render đơn + hàng đợi)."""
+    def _job_cmd(self, job, preview=False):
+        """Dựng lệnh gọi auto_edit.py cho 1 job (render đơn + hàng đợi + xem trước)."""
         cmd = [PY, dflt("auto_edit.py"),
                "--images", job["images"], "--srt", job["srt"], "--out", job["out"]]
         if (job.get("voice") or "").strip():
@@ -1177,7 +1298,24 @@ class App:
         if not job.get("subs", True):
             cmd += ["--no-subtitles"]
         if job.get("crossfade", False):
-            cmd += ["--transition", "fade"]
+            cmd += ["--transition", job.get("transition") or "fade"]
+        if job.get("color") and job["color"] != "none":
+            cmd += ["--color", job["color"]]
+        if job.get("vignette"):
+            cmd += ["--vignette"]
+        if job.get("grain"):
+            cmd += ["--grain"]
+        bgm = (job.get("bgm") or "").strip()
+        if bgm and os.path.isfile(bgm):
+            try:
+                bv = float(job.get("bgm_volume", "0.18"))
+            except (TypeError, ValueError):
+                bv = 0.18
+            cmd += ["--bgm", bgm, "--bgm-volume", f"{bv}"]
+            if not job.get("duck", True):
+                cmd += ["--no-duck"]
+        if preview:
+            cmd += ["--max-scenes", "3"]      # xem trước: chỉ vài cảnh đầu cho nhanh
         return cmd
 
     def add_to_queue(self):

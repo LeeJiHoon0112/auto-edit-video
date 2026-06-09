@@ -46,6 +46,15 @@ IMG_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".webm")
 AUDIO_NAMES = ("voice.mp3", "voice.wav", "voice.m4a", "voiceover.mp3", "voiceover.wav")
 
+# Các kiểu chuyển cảnh (transition) của FFmpeg xfade — áp cho chuỗi ẢNH TĨNH liên tiếp.
+# "none" = cắt thẳng (không hiệu ứng). Tất cả đều có sẵn trong FFmpeg, không cần gì thêm.
+TRANSITIONS = ["none", "fade", "fadeblack", "fadewhite", "dissolve",
+               "slideleft", "slideright", "slideup", "slidedown",
+               "wipeleft", "wiperight", "wipeup", "wipedown",
+               "smoothleft", "smoothright", "smoothup", "smoothdown",
+               "circleopen", "circleclose", "radial", "pixelize",
+               "zoomin", "diagtl", "diagbr"]
+
 # Phụ đề: tạo file ASS có PlayResX/Y = đúng kích thước video -> mọi giá trị tính bằng
 # PIXEL THẬT (không bị libass scale theo thang 288 gây phụ đề trôi lên giữa màn hình).
 # Kiểu "quân sự/tài liệu": IN HOA, chữ trắng to đậm khối, viền đen DÀY + bóng.
@@ -216,6 +225,37 @@ def probe_duration(path):
         return None
 
 
+def probe_fps(path):
+    """FPS thật của 1 clip video (avg_frame_rate). Veo thường 24. None nếu không đọc được."""
+    if not FFPROBE:
+        return None
+    res = run([FFPROBE, "-v", "error", "-select_streams", "v:0",
+               "-show_entries", "stream=avg_frame_rate",
+               "-of", "default=noprint_wrappers=1:nokey=1", path])
+    s = (res.stdout or "").strip()
+    try:
+        if "/" in s:
+            a, b = s.split("/")
+            return float(a) / float(b) if float(b) else None
+        return float(s)
+    except (ValueError, ZeroDivisionError):
+        return None
+
+
+def color_grade_filter(name):
+    """Trả chuỗi filter FFmpeg cho 'màu phim' theo preset, hoặc None nếu 'none'."""
+    presets = {
+        "cinematic": ("eq=contrast=1.08:saturation=1.10,"
+                      "colorbalance=rs=0.03:rm=0.02:rh=0.05:bs=-0.04:bm=-0.03:bh=-0.05"),
+        "cold": ("eq=contrast=1.10:saturation=0.88,"
+                 "colorbalance=bs=0.06:bm=0.04:bh=0.05:rs=-0.03:rh=-0.03"),
+        "warm": ("eq=contrast=1.03:saturation=1.06,"
+                 "colorbalance=rs=0.06:rm=0.05:rh=0.06:bs=-0.05:bh=-0.05"),
+        "bw": "hue=s=0,eq=contrast=1.12",
+    }
+    return presets.get(name)
+
+
 # ----------------------------------------------------------------------------
 # Tạo từng cảnh (ảnh -> clip mp4) với Ken Burns + fade
 # ----------------------------------------------------------------------------
@@ -233,10 +273,13 @@ def build_clip(media, duration, out_path, kenburns=True, index=0, clip_fit="auto
 
         mode = clip_fit
         if mode == "auto":
-            if 0.8 <= ratio <= 1.25:
-                mode = "speed"           # lệch ít -> đổi tốc độ, giữ trọn nội dung
-            elif ratio < 0.8:
-                mode = "cut"             # clip dài hơn nhiều -> cắt lấy phần đầu
+            # Ưu tiên 'cut' khi clip ĐỦ DÀI (>= ~96% cảnh): giữ NGUYÊN frame gốc của Veo
+            # -> KHÔNG đổi tốc độ, KHÔNG nhân frame -> hết rung (judder). Chỉ làm chậm khi
+            # clip NGẮN HƠN cảnh và lệch ít; lệch nhiều thì lặp.
+            if ratio <= 1.04:
+                mode = "cut"             # clip >= cảnh -> cắt lấy phần đầu (mượt nhất)
+            elif ratio <= 1.25:
+                mode = "speed"           # clip ngắn hơn chút -> làm chậm nhẹ cho khớp
             else:
                 mode = "loop"            # clip ngắn hơn nhiều -> lặp cho đủ
 
@@ -303,7 +346,7 @@ XFADE_CHUNK = 20
 _XF_SEQ = [0]            # bộ đếm tạo tên file segment xfade DUY NHẤT (tránh trùng khi đệ quy)
 
 
-def _xfade_chain(clip_paths, lens, dur, out_path):
+def _xfade_chain(clip_paths, lens, dur, out_path, transition="fade"):
     """Crossfade 1 cụm NHỎ (<= XFADE_CHUNK ảnh) trong đúng 1 lệnh ffmpeg."""
     inputs = []
     for p in clip_paths:
@@ -314,7 +357,7 @@ def _xfade_chain(clip_paths, lens, dur, out_path):
     for j in range(1, len(clip_paths)):
         off = cum - dur
         lbl = f"[x{j}]"
-        fc.append(f"{prev}[{j}:v]xfade=transition=fade:"
+        fc.append(f"{prev}[{j}:v]xfade=transition={transition}:"
                   f"duration={dur:.3f}:offset={off:.3f}{lbl}")
         prev = lbl
         cum = cum + lens[j] - dur
@@ -324,14 +367,14 @@ def _xfade_chain(clip_paths, lens, dur, out_path):
     run(cmd)
 
 
-def xfade_group(clip_paths, lens, dur, out_path):
+def xfade_group(clip_paths, lens, dur, out_path, transition="fade"):
     """Nối 1 nhóm ảnh bằng crossfade. Nhóm LỚN -> chia thành các cụm <= XFADE_CHUNK,
     crossfade từng cụm ra segment (mỗi segment giữ phần "đuôi" thừa để crossfade tiếp),
     rồi crossfade CÁC SEGMENT với nhau -> liền mạch, không lệch thời lượng, không vượt
     giới hạn dòng lệnh Windows. lens = độ dài render mỗi clip."""
     n = len(clip_paths)
     if n <= XFADE_CHUNK:
-        _xfade_chain(clip_paths, lens, dur, out_path)
+        _xfade_chain(clip_paths, lens, dur, out_path, transition)
         return
     tmpd = os.path.dirname(out_path)
     segs, seg_lens, i = [], [], 0
@@ -343,12 +386,12 @@ def xfade_group(clip_paths, lens, dur, out_path):
             shutil.copyfile(clip_paths[i], seg)
             seg_lens.append(lens[i])
         else:
-            _xfade_chain(clip_paths[i:j], lens[i:j], dur, seg)
+            _xfade_chain(clip_paths[i:j], lens[i:j], dur, seg, transition)
             seg_lens.append(sum(lens[i:j]) - (j - i - 1) * dur)
         segs.append(seg)
         i = j
     # Crossfade các segment với nhau (số segment nhỏ -> đệ quy 1 lần là đủ)
-    xfade_group(segs, seg_lens, dur, out_path)
+    xfade_group(segs, seg_lens, dur, out_path, transition)
 
 
 def concat_copy(paths, out_path, tmp):
@@ -384,13 +427,34 @@ def main():
     ap.add_argument("--clip-fit", choices=["auto", "speed", "cut", "loop"], default="auto",
                     help="Khớp clip video vào cảnh: auto (khuyên) | speed: đổi tốc độ | "
                          "cut: cắt lấy đầu | loop: lặp cho đủ")
-    ap.add_argument("--transition", choices=["none", "fade"], default="none",
-                    help="Hiệu ứng chuyển cảnh cho ẢNH TĨNH: none | fade (crossfade)")
+    ap.add_argument("--transition", choices=TRANSITIONS, default="none",
+                    help="Kiểu chuyển cảnh giữa các ẢNH TĨNH: none=cắt thẳng | fade | "
+                         "dissolve | slideleft/right/up/down | wipeleft/... | "
+                         "circleopen | radial | zoomin ... (danh sách TRANSITIONS)")
     ap.add_argument("--xfade-duration", type=float, default=0.5,
                     help="Thời gian crossfade giữa 2 ảnh (giây)")
+    ap.add_argument("--fps", type=int, default=None,
+                    help="FPS video ra. Bỏ trống = TỰ ĐỘNG: khớp clip video (Veo 24fps) "
+                         "nếu có clip -> hết rung; 30 nếu toàn ảnh tĩnh (Ken Burns mượt).")
     ap.add_argument("--no-kenburns", action="store_true")
     ap.add_argument("--no-subtitles", action="store_true")
+    # --- Màu phim (#3) ---
+    ap.add_argument("--color", choices=["none", "cinematic", "cold", "warm", "bw"],
+                    default="none",
+                    help="Màu phim: none | cinematic (điện ảnh) | cold (lạnh/quân sự) | "
+                         "warm (ấm hoài niệm) | bw (đen trắng tài liệu)")
+    ap.add_argument("--vignette", action="store_true", help="Tối nhẹ 4 góc (điện ảnh)")
+    ap.add_argument("--grain", action="store_true", help="Thêm hạt phim nhẹ")
+    # --- Nhạc nền (#4) ---
+    ap.add_argument("--bgm", default=None,
+                    help="File nhạc nền (mp3/wav). Tự lặp cho đủ dài + fade nhỏ ở cuối.")
+    ap.add_argument("--bgm-volume", type=float, default=0.18,
+                    help="Âm lượng nhạc nền 0..1 (mặc định 0.18 = nhỏ, nền cho lời thoại)")
+    ap.add_argument("--no-duck", action="store_true",
+                    help="TẮT tự hạ nhạc khi có lời (mặc định BẬT: nhạc tự nhỏ lúc đọc)")
     ap.add_argument("--keep-temp", action="store_true")
+    ap.add_argument("--max-scenes", type=int, default=None,
+                    help="Chỉ render N cảnh ĐẦU — dùng cho XEM TRƯỚC nhanh hiệu ứng.")
     args = ap.parse_args()
 
     if not FFMPEG:
@@ -448,6 +512,28 @@ def main():
         scenes = [(media[i], per) for i in range(n_img)]
         mode_label = f"rải đều {n_img} ảnh"
 
+    # ---- XEM TRƯỚC: chỉ giữ N cảnh đầu cho render nhanh ----
+    if args.max_scenes and args.max_scenes > 0 and len(scenes) > args.max_scenes:
+        scenes = scenes[:args.max_scenes]
+        total_end = sum(d for _, d in scenes)
+        mode_label += f" | XEM TRƯỚC {len(scenes)} cảnh đầu"
+
+    # ---- Chọn FPS: khớp clip Veo để HẾT RUNG ----
+    # Clip Veo thường 24fps. Ép lên 30fps phải nhân bản frame KHÔNG đều -> giật (judder).
+    # Có clip video -> dùng FPS = fps clip (24). Toàn ảnh tĩnh -> 30 (Ken Burns mượt hơn).
+    has_video = any(src.lower().endswith(VIDEO_EXTS) for src, _ in scenes)
+    if args.fps:
+        fps_use, fps_why = args.fps, "theo --fps"
+    elif has_video:
+        vsrc = next(src for src, _ in scenes if src.lower().endswith(VIDEO_EXTS))
+        f = probe_fps(vsrc)
+        fps_use = int(round(f)) if f else 24
+        fps_why = "khớp clip video -> hết rung"
+    else:
+        fps_use, fps_why = 30, "toàn ảnh tĩnh -> Ken Burns mượt"
+    globals()["FPS"] = max(1, fps_use)
+    print(f"• FPS: {FPS} ({fps_why})")
+
     voice_name = os.path.basename(voice) if voice else "KHÔNG"
     dur_txt = f"{audio_dur:.1f}s" if audio_dur else "theo SRT"
     print(f"• Phụ đề: {n_seg} đoạn (tự khớp voiceover theo timestamp) | "
@@ -465,7 +551,7 @@ def main():
     try:
         # 1) Render từng cảnh (ảnh nằm giữa 2 ảnh -> render dài thêm để crossfade)
         is_img = [not s.lower().endswith(VIDEO_EXTS) for s, _ in scenes]
-        use_xf = (args.transition == "fade")
+        use_xf = (args.transition != "none")
         D = max(0.15, min(args.xfade_duration, 1.5)) if use_xf else 0.0
 
         clips, rlen = [], []
@@ -500,7 +586,7 @@ def main():
                         segments.append(clips[i])
                     else:
                         seg = os.path.join(tmp, f"seg_{i:04d}.mp4")
-                        xfade_group(clips[i:j], rlen[i:j], D, seg)
+                        xfade_group(clips[i:j], rlen[i:j], D, seg, args.transition)
                         segments.append(seg)
                     i = j
                 else:
@@ -508,38 +594,77 @@ def main():
                     i += 1
             concat_copy(segments, silent, tmp)
 
-        # 3) Pass cuối: burn phụ đề + ghép voice
+        # 3) Pass cuối: màu phim + vignette + hạt phim + phụ đề + voice + NHẠC NỀN
         os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
         out_abs = os.path.abspath(args.out)
+        bgm = os.path.abspath(args.bgm) if (args.bgm and os.path.isfile(args.bgm)) else None
+        vid_dur = probe_duration(silent) or total_end
+
+        # Chuỗi filter VIDEO (#3): màu -> vignette -> hạt phim -> phụ đề
+        # (phụ đề để CUỐI chuỗi -> chữ vẽ trên cùng, không bị ám màu/tối góc che).
+        vchain = []
+        cg = color_grade_filter(args.color)
+        if cg:
+            vchain.append(cg)
+        if args.vignette:
+            vchain.append("vignette=angle=PI/5")
+        if args.grain:
+            vchain.append("noise=alls=6:allf=t")
+        cwd = None
+        if not args.no_subtitles:
+            # ASS (tên ascii, trong temp) PlayResX/Y = kích thước video -> phụ đề đúng pixel thật.
+            subs = os.path.join(tmp, "subs.ass")
+            _write_ass(args.srt, subs, WIDTH, HEIGHT)
+            cwd = tmp                       # chạy ffmpeg trong temp -> path phụ đề tương đối
+            vchain.append("subtitles=subs.ass")
 
         cmd = [FFMPEG, "-y", "-i", silent]
         if voice:
             cmd += ["-i", os.path.abspath(voice)]
+        if bgm:
+            cmd += ["-stream_loop", "-1", "-i", bgm]   # lặp nhạc cho đủ dài video
 
-        vf = None
-        cwd = None
-        if not args.no_subtitles:
-            # Tạo ASS (tên ascii, đặt trong temp) với PlayResX/Y = kích thước video
-            # -> phụ đề canh đúng pixel thật, không trôi lên giữa.
-            subs = os.path.join(tmp, "subs.ass")
-            _write_ass(args.srt, subs, WIDTH, HEIGHT)
-            cwd = tmp                       # chạy ffmpeg trong temp -> path tương đối
-            vf = "subtitles=subs.ass"
-
-        if vf:
-            cmd += ["-vf", vf]
-        cmd += ["-c:v", "libx264", "-preset", "medium", "-crf", "20",
-                "-pix_fmt", "yuv420p"]
-        if voice:
-            cmd += ["-c:a", "aac", "-b:a", "192k", "-map", "0:v:0", "-map", "1:a:0",
-                    "-shortest"]
+        if bgm:
+            # Có nhạc nền -> gộp tất cả vào -filter_complex (video + trộn audio)
+            bidx = 2 if voice else 1
+            fc = []
+            if vchain:
+                fc.append(f"[0:v]{','.join(vchain)}[v]")
+                vmap = "[v]"
+            else:
+                vmap = "0:v:0"
+            bvol = max(0.0, min(2.0, args.bgm_volume))
+            fo = max(0.0, vid_dur - 2.0)                # nhạc fade nhỏ 2s cuối
+            fc.append(f"[{bidx}:a]volume={bvol:.3f},"
+                      f"afade=t=out:st={fo:.2f}:d=2,atrim=0:{vid_dur:.3f}[bgm]")
+            if voice:
+                if not args.no_duck:
+                    # ducking: nhạc TỰ NHỎ lại khi có lời (voice làm sidechain)
+                    fc.append("[1:a]asplit=2[vmix][vsc]")
+                    fc.append("[bgm][vsc]sidechaincompress=threshold=0.05:ratio=8:"
+                              "attack=15:release=300[bgd]")
+                    fc.append("[bgd][vmix]amix=inputs=2:normalize=0[aout]")
+                else:
+                    fc.append("[bgm][1:a]amix=inputs=2:normalize=0[aout]")
+            else:
+                fc.append("[bgm]anull[aout]")
+            cmd += ["-filter_complex", ";".join(fc), "-map", vmap, "-map", "[aout]",
+                    "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
+                    "-c:a", "aac", "-b:a", "192k", "-t", f"{vid_dur:.3f}", out_abs]
+            print("• Đang render bản cuối (màu + phụ đề + voice + nhạc nền)...")
         else:
-            cmd += ["-map", "0:v:0"]
-        cmd += [out_abs]
+            # Không nhạc nền -> dùng -vf cho video như cũ
+            if vchain:
+                cmd += ["-vf", ",".join(vchain)]
+            cmd += ["-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p"]
+            if voice:
+                cmd += ["-c:a", "aac", "-b:a", "192k", "-map", "0:v:0", "-map", "1:a:0",
+                        "-shortest"]
+            else:
+                cmd += ["-map", "0:v:0"]
+            cmd += [out_abs]
+            print("• Đang render bản cuối (phụ đề + voice)...")
 
-        # silent là absolute -> để subtitles dùng path tương đối, đưa -i silent
-        # vẫn dùng absolute path (ffmpeg input không bị ảnh hưởng bởi filter escaping)
-        print("• Đang render bản cuối (phụ đề + voice)...")
         run(cmd, cwd=cwd)
 
         print(f"\n✅ XONG: {out_abs}")
