@@ -25,6 +25,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 # Ép stdout/stderr sang UTF-8 để in được tiếng Việt trên console Windows (cp1252)
 for _stream in (sys.stdout, sys.stderr):
@@ -45,6 +47,9 @@ KENBURNS_SS = 1.5        # phóng to nội bộ khử rung zoompan rồi thu v�
 IMG_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".webm")
 AUDIO_NAMES = ("voice.mp3", "voice.wav", "voice.m4a", "voiceover.mp3", "voiceover.wav")
+
+SRC_MAX = 6000          # ảnh nguồn lớn hơn cạnh này -> TỰ thu nhỏ (chống TREO khi decode + nhanh hơn)
+SCENE_TIMEOUT = 600     # 1 cảnh render quá N giây -> coi như treo: kill + báo rõ cảnh nào (không đứng vô tận)
 
 # Các kiểu chuyển cảnh (transition) của FFmpeg xfade — áp cho chuỗi ẢNH TĨNH liên tiếp.
 # "none" = cắt thẳng (không hiệu ứng). Tất cả đều có sẵn trong FFmpeg, không cần gì thêm.
@@ -131,15 +136,19 @@ FFMPEG = find_tool("ffmpeg")
 FFPROBE = find_tool("ffprobe")
 
 
-def run(cmd, cwd=None):
-    """Chạy lệnh, in lỗi gọn nếu fail. Ẩn cửa sổ console FFmpeg trên Windows."""
+def run(cmd, cwd=None, timeout=None):
+    """Chạy lệnh, in lỗi gọn nếu fail. Ẩn cửa sổ console FFmpeg trên Windows.
+    timeout (giây): quá hạn -> kill + báo lỗi (chống TREO vô tận khi gặp ảnh khổng lồ/lỗi)."""
     flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-    res = subprocess.run(cmd, cwd=cwd, stdout=subprocess.PIPE,
-                         stderr=subprocess.PIPE, text=True, encoding="utf-8",
-                         errors="replace", creationflags=flags)
+    try:
+        res = subprocess.run(cmd, cwd=cwd, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True, encoding="utf-8",
+                             errors="replace", creationflags=flags, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise SystemExit(f"QUÁ {timeout}s chưa xong (treo?) — {' '.join(str(c) for c in cmd[:3])} ...")
     if res.returncode != 0:
         sys.stderr.write("\n[FFmpeg lỗi]\n" + (res.stderr or "")[-1500:] + "\n")
-        raise SystemExit(f"Lệnh thất bại: {' '.join(cmd[:3])} ...")
+        raise SystemExit(f"Lệnh thất bại: {' '.join(str(c) for c in cmd[:3])} ...")
     return res
 
 
@@ -257,6 +266,95 @@ def color_grade_filter(name):
 
 
 # ----------------------------------------------------------------------------
+# Encoder phần cứng (GPU) — tự dò cái CHẠY ĐƯỢC trên máy, fallback libx264
+# ----------------------------------------------------------------------------
+_ENC = None             # cache: (tên, [flags]) — chỉ dò 1 lần mỗi lần chạy
+
+# Encoder video tốc độ cao, ưu tiên GPU. cq/global_quality ~ chất lượng crf 23.
+_GPU_ENCODERS = [
+    ("h264_nvenc", ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "23", "-b:v", "0"]),
+    ("h264_qsv",   ["-c:v", "h264_qsv", "-global_quality", "23", "-preset", "medium"]),
+    ("h264_amf",   ["-c:v", "h264_amf", "-quality", "balanced", "-rc", "cqp", "-qp_i", "23", "-qp_p", "23"]),
+]
+_CPU_ENCODER = ("libx264", ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"])
+
+
+def _test_encoder(flags):
+    """Encode thử 5 frame testsrc -> True nếu encoder CHẠY ĐƯỢC THẬT trên máy này
+    (vd máy không iGPU thì h264_qsv có trong build nhưng test sẽ fail -> bị loại)."""
+    win = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    try:
+        r = subprocess.run(
+            [FFMPEG, "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+             "-i", "testsrc2=size=256x256:rate=30", "-frames:v", "5"]
+            + flags + ["-f", "null", "-"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=win, timeout=30)
+        return r.returncode == 0
+    except Exception:  # noqa
+        return False
+
+
+def detect_encoder(pref="auto"):
+    """Chọn encoder video NHANH NHẤT chạy được: ưu tiên GPU (nvenc/qsv/amf),
+    fallback libx264 veryfast. Cache lại. pref='cpu' -> ép libx264."""
+    global _ENC
+    if _ENC is not None:
+        return _ENC
+    if pref != "cpu":
+        for name, flags in _GPU_ENCODERS:
+            if _test_encoder(flags):
+                _ENC = (name, flags)
+                return _ENC
+    _ENC = _CPU_ENCODER
+    return _ENC
+
+
+def enc_name():
+    return (_ENC or detect_encoder())[0]
+
+
+def enc_args(image=False):
+    """Flags encoder video. image=True -> libx264 veryfast (file ẢNH nhỏ, encode tĩnh đủ
+    nhanh, vì nút thắt của ảnh là FILTER không phải encode). Còn lại -> GPU đã dò."""
+    if image:
+        return list(_CPU_ENCODER[1])
+    return list((_ENC or detect_encoder())[1])
+
+
+def _probe_size(path):
+    """(width, height) của ảnh/video, hoặc (None, None)."""
+    if not FFPROBE:
+        return None, None
+    try:
+        r = run([FFPROBE, "-v", "error", "-select_streams", "v:0",
+                 "-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", path],
+                timeout=30)
+        w, h = (r.stdout or "").strip().split("x")[:2]
+        return int(w), int(h)
+    except Exception:  # noqa
+        return None, None
+
+
+def _maybe_shrink_image(media, tmp_dir):
+    """Ảnh nguồn khổng lồ (cạnh > SRC_MAX) -> thu nhỏ về SRC_MAX trước khi Ken Burns.
+    Chống TREO (decode ảnh vài chục–trăm MP ngốn RAM) + render nhanh hơn. Trả đường dẫn dùng."""
+    w, h = _probe_size(media)
+    if not w or not h or max(w, h) <= SRC_MAX:
+        return media
+    small = os.path.join(tmp_dir, "shrink_" + re.sub(r"[^\w.]", "_", os.path.basename(media)) + ".png")
+    try:
+        run([FFMPEG, "-y", "-i", media, "-vf",
+             f"scale='if(gt(iw,ih),{SRC_MAX},-1)':'if(gt(iw,ih),-1,{SRC_MAX})':flags=lanczos",
+             small], timeout=180)
+        print(f"     (ảnh lớn {w}x{h} -> thu nhỏ {SRC_MAX}px cho nhanh & khỏi treo)")
+        return small if os.path.isfile(small) else media
+    except SystemExit:
+        print(f"     (CẢNH BÁO: ảnh {w}x{h} quá lớn, không thu nhỏ được — thử render thẳng)")
+        return media
+
+
+# ----------------------------------------------------------------------------
 # Tạo từng cảnh (ảnh -> clip mp4) với Ken Burns + fade
 # ----------------------------------------------------------------------------
 def build_clip(media, duration, out_path, kenburns=True, index=0, clip_fit="auto",
@@ -293,11 +391,12 @@ def build_clip(media, duration, out_path, kenburns=True, index=0, clip_fit="auto
         else:  # cut
             vf = f"{base},fps={FPS},format=yuv420p"
             cmd = [FFMPEG, "-y", "-an", "-i", media, "-t", f"{duration:.3f}", "-vf", vf]
-        cmd += ["-c:v", "libx264", "-preset", "medium", "-crf", "20", out_path]
-        run(cmd)
+        cmd += enc_args() + ["-pix_fmt", "yuv420p", out_path]
+        run(cmd, timeout=SCENE_TIMEOUT)
         return
 
-    # Ảnh tĩnh
+    # Ảnh tĩnh — ảnh khổng lồ thì TỰ thu nhỏ trước (chống treo + nhanh hơn)
+    media = _maybe_shrink_image(media, os.path.dirname(out_path))
     if kenburns:
         amt = KENBURNS_AMOUNT
         zmax = 1.0 + amt
@@ -331,10 +430,9 @@ def build_clip(media, duration, out_path, kenburns=True, index=0, clip_fit="auto
                f"fade=t=out:st={duration - FADE:.3f}:d={FADE},")
     vf += "setsar=1,format=yuv420p"
 
-    cmd = [FFMPEG, "-y", "-loop", "1", "-i", media, "-t", f"{duration:.3f}",
-           "-vf", vf, "-c:v", "libx264", "-preset", "medium", "-crf", "20",
-           out_path]
-    run(cmd)
+    cmd = ([FFMPEG, "-y", "-loop", "1", "-i", media, "-t", f"{duration:.3f}",
+            "-vf", vf] + enc_args(image=True) + ["-pix_fmt", "yuv420p", out_path])
+    run(cmd, timeout=SCENE_TIMEOUT)
 
 
 # ----------------------------------------------------------------------------
@@ -361,10 +459,10 @@ def _xfade_chain(clip_paths, lens, dur, out_path, transition="fade"):
                   f"duration={dur:.3f}:offset={off:.3f}{lbl}")
         prev = lbl
         cum = cum + lens[j] - dur
-    cmd = [FFMPEG, "-y"] + inputs + ["-filter_complex", ";".join(fc),
-           "-map", prev, "-r", str(int(FPS)), "-c:v", "libx264",
-           "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p", out_path]
-    run(cmd)
+    cmd = ([FFMPEG, "-y"] + inputs + ["-filter_complex", ";".join(fc),
+           "-map", prev, "-r", str(int(FPS))] + enc_args()
+           + ["-pix_fmt", "yuv420p", out_path])
+    run(cmd, timeout=SCENE_TIMEOUT)
 
 
 def xfade_group(clip_paths, lens, dur, out_path, transition="fade"):
@@ -455,6 +553,10 @@ def main():
     ap.add_argument("--keep-temp", action="store_true")
     ap.add_argument("--max-scenes", type=int, default=None,
                     help="Chỉ render N cảnh ĐẦU — dùng cho XEM TRƯỚC nhanh hiệu ứng.")
+    ap.add_argument("--encoder", choices=["auto", "cpu"], default="auto",
+                    help="auto: ưu tiên GPU (nvenc/qsv/amf) cho NHANH; cpu: libx264 (mọi máy).")
+    ap.add_argument("--jobs", type=int, default=None,
+                    help="Số cảnh render SONG SONG cùng lúc. Bỏ trống = tự động theo CPU.")
     args = ap.parse_args()
 
     if not FFMPEG:
@@ -534,6 +636,15 @@ def main():
     globals()["FPS"] = max(1, fps_use)
     print(f"• FPS: {FPS} ({fps_why})")
 
+    # ---- Encoder (ưu tiên GPU) + số luồng render song song ----
+    enc = detect_encoder(args.encoder)[0]
+    cpu = os.cpu_count() or 4
+    auto_jobs = max(1, min(4, cpu // 2))
+    if enc != "libx264":
+        auto_jobs = min(auto_jobs, 3)          # encoder GPU: cap session đồng thời cho an toàn
+    jobs = args.jobs if (args.jobs and args.jobs > 0) else auto_jobs
+    print(f"• Encoder: {enc} | Render song song: {jobs} cảnh/lúc")
+
     voice_name = os.path.basename(voice) if voice else "KHÔNG"
     dur_txt = f"{audio_dur:.1f}s" if audio_dur else "theo SRT"
     print(f"• Phụ đề: {n_seg} đoạn (tự khớp voiceover theo timestamp) | "
@@ -554,16 +665,37 @@ def main():
         use_xf = (args.transition != "none")
         D = max(0.15, min(args.xfade_duration, 1.5)) if use_xf else 0.0
 
-        clips, rlen = [], []
+        n_sc = len(scenes)
+        clips = [os.path.join(tmp, f"clip_{i:04d}.mp4") for i in range(n_sc)]
+        rlen = []
+        jobtasks = []
         for i, (src, dur) in enumerate(scenes):
-            extra = D if (use_xf and is_img[i] and i + 1 < len(scenes)
-                          and is_img[i + 1]) else 0.0
-            clip = os.path.join(tmp, f"clip_{i:04d}.mp4")
-            print(f"  [{i+1}/{len(scenes)}] {os.path.basename(src)}  ({dur:.2f}s)")
-            build_clip(src, dur + extra, clip, kenburns=not args.no_kenburns, index=i,
-                       clip_fit=args.clip_fit, edge_fade=not use_xf)
-            clips.append(clip)
+            extra = D if (use_xf and is_img[i] and i + 1 < n_sc and is_img[i + 1]) else 0.0
             rlen.append(dur + extra)
+            jobtasks.append((i, src, dur + extra))
+
+        done = [0]
+        plock = threading.Lock()
+
+        def _render_scene(t):
+            i, src, d = t
+            try:
+                build_clip(src, d, clips[i], kenburns=not args.no_kenburns, index=i,
+                           clip_fit=args.clip_fit, edge_fade=not use_xf)
+            except SystemExit as e:
+                raise SystemExit(f"Cảnh {i+1} ({os.path.basename(src)}): {e}")
+            with plock:
+                done[0] += 1
+                print(f"  [{done[0]}/{n_sc}] {os.path.basename(src)}  ({d:.2f}s)")
+
+        # Render SONG SONG nhiều cảnh -> tận dụng đa nhân (jobs=1 thì tuần tự như cũ)
+        if jobs <= 1:
+            for t in jobtasks:
+                _render_scene(t)
+        else:
+            with ThreadPoolExecutor(max_workers=jobs) as ex:
+                for _ in ex.map(_render_scene, jobtasks):
+                    pass
 
         # 2) Ghép các cảnh
         silent = os.path.join(tmp, "video_silent.mp4")
@@ -648,15 +780,15 @@ def main():
                     fc.append("[bgm][1:a]amix=inputs=2:normalize=0[aout]")
             else:
                 fc.append("[bgm]anull[aout]")
-            cmd += ["-filter_complex", ";".join(fc), "-map", vmap, "-map", "[aout]",
-                    "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
-                    "-c:a", "aac", "-b:a", "192k", "-t", f"{vid_dur:.3f}", out_abs]
+            cmd += (["-filter_complex", ";".join(fc), "-map", vmap, "-map", "[aout]"]
+                    + enc_args() + ["-pix_fmt", "yuv420p",
+                    "-c:a", "aac", "-b:a", "192k", "-t", f"{vid_dur:.3f}", out_abs])
             print("• Đang render bản cuối (màu + phụ đề + voice + nhạc nền)...")
         else:
             # Không nhạc nền -> dùng -vf cho video như cũ
             if vchain:
                 cmd += ["-vf", ",".join(vchain)]
-            cmd += ["-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p"]
+            cmd += enc_args() + ["-pix_fmt", "yuv420p"]
             if voice:
                 cmd += ["-c:a", "aac", "-b:a", "192k", "-map", "0:v:0", "-map", "1:a:0",
                         "-shortest"]
