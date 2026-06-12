@@ -136,17 +136,25 @@ def _build_loopclip(bg, effect, intensity, tmp):
 
 def _viz_filter(viz):
     """Trả (chuỗi filter audio -> [viz], vị trí overlay y) cho visualizer; None nếu 'none'.
-    Dùng [av] = nhánh audio (sau asplit). Nền đen của visualizer bị colorkey bỏ -> chỉ
-    còn thanh/sóng overlay lên video nền."""
+    Dùng [av] = nhánh audio (sau asplit). Nền đen của visualizer bị colorkey/alpha bỏ ->
+    chỉ còn thanh/sóng overlay lên video nền. Vị trí ~65% chiều cao (cao hơn đáy), dải MỎNG."""
     if viz == "bars":
         # volume + ascale=cbrt -> bars hiện RÕ kể cả khi nhạc ngủ êm (biên độ nhỏ)
-        f = ("[av]volume=4,showfreqs=s=1920x200:mode=bar:ascale=cbrt:fscale=log:win_size=2048:"
+        f = ("[av]volume=7,showfreqs=s=1920x120:mode=bar:ascale=cbrt:fscale=log:win_size=2048:"
              "colors=0x7fb4ff,format=rgba,colorkey=0x000000:0.18:0.08[viz]")
-        return f, "H-210"
+        return f, "H*0.66"
     if viz == "waves":
-        f = ("[av]volume=5,aformat=channel_layouts=mono,showwaves=s=1920x170:mode=cline:"
-             "colors=0xaad4ff:scale=cbrt:rate=30,format=rgba,colorkey=0x000000:0.16:0.08[viz]")
-        return f, "H-190"
+        # Kiểu VẠCH DỌC đối xứng (giống music bars): waveform (showwaves cline) NHÂN với
+        # 'lưới sọc' comb (geq tính 1 LẦN nhờ loop) -> cắt sóng thành các vạch mảnh, gap
+        # trong suốt lộ video nền. alphamerge: trắng + alpha theo biên độ -> mềm, dịu mắt.
+        f = ("[av]volume=2.5,aformat=channel_layouts=mono,showwaves=s=1920x100:mode=cline:"
+             "colors=0xffffff:scale=cbrt:rate=30,format=gray[wav];"
+             "color=black:s=1920x100:r=30,geq=lum='if(lt(mod(X,24),7),255,0)':cb=128:cr=128,"
+             "format=gray,loop=loop=-1:size=1[comb];"
+             "[wav][comb]blend=all_mode=multiply,format=gray[mask];"
+             "color=0xffffff:s=1920x100:r=30[col];"
+             "[col][mask]alphamerge[viz]")
+        return f, "H*0.65"
     return None, None
 
 
