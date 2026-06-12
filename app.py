@@ -234,6 +234,13 @@ class App:
         self.bgm = tk.StringVar(value="")              # file nhạc nền (#4)
         self.bgm_volume = tk.StringVar(value="0.18")
         self.duck = tk.BooleanVar(value=True)          # tự hạ nhạc khi có lời (ducking)
+        # --- Video ngủ (clip/ảnh nền + audio dài) ---
+        self.sleep_bg = tk.StringVar(value="")
+        self.sleep_audio = tk.StringVar(value="")
+        self.sleep_out = tk.StringVar(value=dflt("output", "sleep.mp4"))
+        self.sleep_effect = tk.StringVar(value="none")
+        self.sleep_intensity = tk.StringVar(value="vua")
+        self.sleep_fade = tk.StringVar(value="4")
         # Thư mục lưu prompt + scenes.csv (TÙY CHỌN). Trống = lưu ở gốc dự án (đè như cũ).
         self.prompt_dir = tk.StringVar(value=self.cfg.get("prompt_dir", ""))
         # File bảng cảnh scenes.csv CHỌN TAY (TÙY CHỌN). Trống = tự tìm. Chọn để chắc
@@ -253,15 +260,18 @@ class App:
         content.pack(side="left", fill="both", expand=True)
 
         # 4 trang nội dung
-        self.pages = {n: ttk.Frame(content) for n in ("prompt", "render", "queue", "settings")}
+        self.pages = {n: ttk.Frame(content)
+                      for n in ("prompt", "render", "sleep", "queue", "settings")}
         self._build_prompt(self.pages["prompt"])
         self._build_render(self.pages["render"])
+        self._build_sleep(self.pages["sleep"])
         self._build_queue(self.pages["queue"])
         self._build_settings(self.pages["settings"])
 
         # Nút điều hướng sidebar
         self._side_btns = {}
         for name, label in (("prompt", "✍️  Tạo Prompt"), ("render", "🎬  Render Video"),
+                            ("sleep", "🌙  Video ngủ"),
                             ("queue", "📋  Hàng đợi"), ("settings", "⚙️  Cài đặt")):
             b = tk.Button(side, text=label, anchor="w", relief="flat", bd=0,
                           padx=12, pady=11, font=("", 10),
@@ -478,6 +488,105 @@ class App:
                   text="Đặt clip Veo tên 01,02,... trong thư mục clip. Render dùng scenes.csv "
                        "(sinh ở trang Tạo Prompt) để khớp clip theo đúng timestamp.").pack(
             fill="x", padx=12, pady=(0, 4))
+
+    # ============================ TRANG VIDEO NGỦ ============================
+    def _build_sleep(self, parent):
+        f1 = ttk.LabelFrame(parent, text="Video ngủ dài (clip/ảnh nền + audio dài → 3-4 tiếng)")
+        f1.pack(fill="x", padx=8, pady=6)
+        self._row(f1, "🎬 NỀN (clip / ảnh):", self.sleep_bg, lambda: self._pick_file(
+            self.sleep_bg, [("Clip / Ảnh", "*.mp4 *.mov *.mkv *.webm *.jpg *.jpeg *.png"),
+                            ("Tất cả", "*.*")]))
+        self._row(f1, "🎵 AUDIO dài:", self.sleep_audio, lambda: self._pick_file(
+            self.sleep_audio, [("Audio", "*.mp3 *.wav *.m4a *.aac"), ("Tất cả", "*.*")]))
+        self._row(f1, "Xuất ra MP4:", self.sleep_out, self._pick_sleep_out)
+        ttk.Label(f1, foreground="#888", wraplength=640,
+                  text="Clip nền ngắn (vd 10s) tự LOOP LIỀN MẠCH (crossfade) cho hết audio, GIỮ "
+                       "NGUYÊN cảnh. Render rất nhanh (loop-copy) — 4 tiếng cũng chỉ vài phút.").pack(
+            fill="x", padx=12, pady=(0, 2))
+
+        f2 = ttk.LabelFrame(parent, text="Tùy chọn")
+        f2.pack(fill="x", padx=8, pady=6)
+        line = ttk.Frame(f2)
+        line.pack(fill="x", padx=10, pady=8)
+        ttk.Label(line, text="✨ Hiệu ứng (cho nền ẢNH tĩnh):").pack(side="left")
+        ttk.Combobox(line, width=8, state="readonly", textvariable=self.sleep_effect,
+                     values=["none", "rain", "snow", "fog", "bokeh"]).pack(side="left", padx=(2, 6))
+        ttk.Combobox(line, width=6, state="readonly", textvariable=self.sleep_intensity,
+                     values=["nhe", "vua", "nang"]).pack(side="left")
+        ttk.Label(line, text="Fade tiếng (s):").pack(side="left", padx=(16, 2))
+        ttk.Spinbox(line, from_=0, to=15, width=5, textvariable=self.sleep_fade).pack(side="left")
+        ttk.Label(f2, foreground="#888", wraplength=640,
+                  text="Để hiệu ứng 'none' nếu nền đã đẹp (vd clip cảnh có sẵn). Hiệu ứng tự tạo "
+                       "(mưa/tuyết/sương/bokeh) chỉ dành cho nền ẢNH TĨNH.").pack(
+            fill="x", padx=12, pady=(0, 4))
+
+        bar = ttk.Frame(parent)
+        bar.pack(fill="x", padx=8, pady=8)
+        self.btn_sleep = ttk.Button(bar, text="🌙  TẠO VIDEO NGỦ", command=self.run_sleep)
+        self.btn_sleep.pack(side="left", padx=4)
+        ttk.Button(bar, text="📂 Mở thư mục xuất",
+                   command=self._open_sleep_dir).pack(side="right", padx=4)
+
+    def _pick_sleep_out(self):
+        p = filedialog.asksaveasfilename(defaultextension=".mp4",
+                                         filetypes=[("MP4", "*.mp4"), ("Tất cả", "*.*")])
+        if p:
+            self.sleep_out.set(p)
+
+    def _open_sleep_dir(self):
+        d = os.path.dirname(os.path.abspath(self.sleep_out.get() or dflt("output", "sleep.mp4")))
+        if os.path.isdir(d):
+            os.startfile(d)
+        else:
+            messagebox.showinfo("Chưa có", "Chưa có thư mục xuất — tạo video ngủ trước.")
+
+    def run_sleep(self):
+        bg = (self.sleep_bg.get() or "").strip()
+        audio = (self.sleep_audio.get() or "").strip()
+        if not os.path.isfile(bg):
+            messagebox.showwarning("Thiếu", "Chưa chọn clip/ảnh nền.")
+            return
+        if not os.path.isfile(audio):
+            messagebox.showwarning("Thiếu", "Chưa chọn file audio dài.")
+            return
+        out = (self.sleep_out.get() or "").strip() or dflt("output", "sleep.mp4")
+        try:
+            fv = float(self.sleep_fade.get())
+        except (TypeError, ValueError):
+            fv = 4.0
+        cmd = [PY, dflt("sleep_video.py"), "--bg", bg, "--audio", audio, "--out", out,
+               "--effect", self.sleep_effect.get(), "--intensity", self.sleep_intensity.get(),
+               "--fade", f"{fv}"]
+
+        self.log.delete("1.0", "end")
+        self._log("$ tạo video ngủ...\n\n")
+        self._busy(True)
+        self.rendering = True
+        self.status.set("Đang tạo video ngủ...")
+
+        def worker():
+            try:
+                env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+                flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+                p = subprocess.Popen(cmd, cwd=HERE, stdout=subprocess.PIPE,
+                                     stderr=subprocess.STDOUT, text=True,
+                                     encoding="utf-8", errors="replace", env=env,
+                                     creationflags=flags)
+                self.render_procs.append(p)
+                for line in p.stdout:
+                    self.q.put(("line", line))
+                p.wait()
+                ok = (p.returncode == 0)
+                self._add_history(out, ok)
+                self.q.put(("queue_finished", None))
+                if ok:
+                    self.q.put(("done", f"✅ Video ngủ xong: {out}"))
+                else:
+                    self.q.put(("done", f"Tạo video ngủ thất bại (mã {p.returncode}). Xem nhật ký."))
+            except Exception as e:  # noqa
+                self.q.put(("done", f"Lỗi: {e}"))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _open_prompts(self):
         p = self._out_path("veo_prompts.txt")
