@@ -241,6 +241,7 @@ class App:
         self.sleep_effect = tk.StringVar(value="none")
         self.sleep_intensity = tk.StringVar(value="vua")
         self.sleep_fade = tk.StringVar(value="4")
+        self.sleep_viz = tk.StringVar(value="none")    # visualizer âm thanh
         # Thư mục lưu prompt + scenes.csv (TÙY CHỌN). Trống = lưu ở gốc dự án (đè như cũ).
         self.prompt_dir = tk.StringVar(value=self.cfg.get("prompt_dir", ""))
         # File bảng cảnh scenes.csv CHỌN TAY (TÙY CHỌN). Trống = tự tìm. Chọn để chắc
@@ -515,9 +516,13 @@ class App:
                      values=["nhe", "vua", "nang"]).pack(side="left")
         ttk.Label(line, text="Fade tiếng (s):").pack(side="left", padx=(16, 2))
         ttk.Spinbox(line, from_=0, to=15, width=5, textvariable=self.sleep_fade).pack(side="left")
+        ttk.Label(line, text="🎵 Visualizer:").pack(side="left", padx=(16, 2))
+        ttk.Combobox(line, width=7, state="readonly", textvariable=self.sleep_viz,
+                     values=["none", "bars", "waves"]).pack(side="left")
         ttk.Label(f2, foreground="#888", wraplength=640,
                   text="Để hiệu ứng 'none' nếu nền đã đẹp (vd clip cảnh có sẵn). Hiệu ứng tự tạo "
-                       "(mưa/tuyết/sương/bokeh) chỉ dành cho nền ẢNH TĨNH.").pack(
+                       "(mưa/tuyết/sương/bokeh) chỉ cho nền ẢNH TĨNH. ⚠️ Visualizer (bars/waves) "
+                       "bật → render LÂU hơn nhiều (vẽ theo audio, không loop-copy được).").pack(
             fill="x", padx=12, pady=(0, 4))
 
         bar = ttk.Frame(parent)
@@ -556,7 +561,7 @@ class App:
             fv = 4.0
         cmd = [PY, dflt("sleep_video.py"), "--bg", bg, "--audio", audio, "--out", out,
                "--effect", self.sleep_effect.get(), "--intensity", self.sleep_intensity.get(),
-               "--fade", f"{fv}"]
+               "--fade", f"{fv}", "--viz", self.sleep_viz.get()]
 
         self.log.delete("1.0", "end")
         self._log("$ tạo video ngủ...\n\n")

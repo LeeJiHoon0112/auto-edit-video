@@ -31,6 +31,7 @@ TEX_H = 2160             # cao texture; vstack đôi -> scroll dọc LIỀN MẠ
 
 EFFECTS = ("none", "rain", "snow", "fog", "bokeh")
 INTENSITIES = ("nhe", "vua", "nang")
+VISUALIZERS = ("none", "bars", "waves")    # thanh nhạc / sóng âm (vẽ theo audio)
 
 # cường độ -> (ngưỡng thưa geq: CAO = THƯA hạt, opacity blend gốc)
 _INTENSITY = {
@@ -133,8 +134,24 @@ def _build_loopclip(bg, effect, intensity, tmp):
     return out
 
 
+def _viz_filter(viz):
+    """Trả (chuỗi filter audio -> [viz], vị trí overlay y) cho visualizer; None nếu 'none'.
+    Dùng [av] = nhánh audio (sau asplit). Nền đen của visualizer bị colorkey bỏ -> chỉ
+    còn thanh/sóng overlay lên video nền."""
+    if viz == "bars":
+        # volume + ascale=cbrt -> bars hiện RÕ kể cả khi nhạc ngủ êm (biên độ nhỏ)
+        f = ("[av]volume=4,showfreqs=s=1920x200:mode=bar:ascale=cbrt:fscale=log:win_size=2048:"
+             "colors=0x7fb4ff,format=rgba,colorkey=0x000000:0.18:0.08[viz]")
+        return f, "H-210"
+    if viz == "waves":
+        f = ("[av]volume=5,aformat=channel_layouts=mono,showwaves=s=1920x170:mode=cline:"
+             "colors=0xaad4ff:scale=cbrt:rate=30,format=rgba,colorkey=0x000000:0.16:0.08[viz]")
+        return f, "H-190"
+    return None, None
+
+
 def make_sleep_video(bg, audio, out, effect="rain", intensity="vua", fade=4.0,
-                     max_seconds=None, encoder="auto"):
+                     max_seconds=None, encoder="auto", viz="none"):
     if not ae.FFMPEG:
         raise SystemExit("Không tìm thấy ffmpeg.")
     if not os.path.isfile(bg):
@@ -159,15 +176,30 @@ def make_sleep_video(bg, audio, out, effect="rain", intensity="vua", fade=4.0,
         print("• (1/2) Dựng đoạn nền loop + hiệu ứng...")
         loop = _build_loopclip(bg, effect, intensity, tmp)
 
-        print("• (2/2) Lặp nền cho hết audio + ghép tiếng + fade (video COPY -> nhanh)...")
         os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
         fo = max(0.0, adur - fade)
-        cmd = [ae.FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
-               "-stream_loop", "-1", "-i", loop, "-i", os.path.abspath(audio),
-               "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy",
-               "-af", f"afade=t=in:st=0:d={min(2.0, fade):.2f},afade=t=out:st={fo:.2f}:d={fade:.2f}",
-               "-c:a", "aac", "-b:a", "192k", "-t", f"{adur:.3f}",
-               "-movflags", "+faststart", os.path.abspath(out)]
+        afade = (f"afade=t=in:st=0:d={min(2.0, fade):.2f},"
+                 f"afade=t=out:st={fo:.2f}:d={fade:.2f}")
+        vfilt, yoff = _viz_filter(viz)
+        if vfilt:
+            # CÓ visualizer -> render FULL theo audio (không loop-copy được) -> chậm hơn
+            print("• (2/2) Render FULL + visualizer theo audio (lâu hơn vì vẽ theo nhạc)...")
+            fc = (f"[1:a]asplit=2[av][ao];{vfilt};"
+                  f"[0:v][viz]overlay=0:{yoff}:format=auto,format=yuv420p[v];"
+                  f"[ao]{afade}[a]")
+            cmd = ([ae.FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
+                    "-stream_loop", "-1", "-i", loop, "-i", os.path.abspath(audio),
+                    "-filter_complex", fc, "-map", "[v]", "-map", "[a]"]
+                   + ae.enc_args() + ["-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+                    "-t", f"{adur:.3f}", "-movflags", "+faststart", os.path.abspath(out)])
+        else:
+            # Không visualizer -> lặp nền COPY cho hết audio (RẤT NHANH)
+            print("• (2/2) Lặp nền cho hết audio + ghép tiếng + fade (video COPY -> nhanh)...")
+            cmd = [ae.FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
+                   "-stream_loop", "-1", "-i", loop, "-i", os.path.abspath(audio),
+                   "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-af", afade,
+                   "-c:a", "aac", "-b:a", "192k", "-t", f"{adur:.3f}",
+                   "-movflags", "+faststart", os.path.abspath(out)]
         ae.run(cmd, timeout=None)
         print(f"\n✅ XONG: {os.path.abspath(out)}")
     finally:
@@ -185,10 +217,13 @@ def main():
     ap.add_argument("--max-seconds", type=float, default=None,
                     help="Giới hạn độ dài (để TEST nhanh, vd 60). Bỏ trống = cả audio.")
     ap.add_argument("--encoder", choices=["auto", "cpu"], default="auto")
+    ap.add_argument("--viz", choices=VISUALIZERS, default="none",
+                    help="Visualizer âm thanh: none | bars (thanh nhạc) | waves (sóng). "
+                         "Bật -> render FULL theo audio (lâu hơn nhiều).")
     args = ap.parse_args()
     make_sleep_video(args.bg, args.audio, args.out, effect=args.effect,
                      intensity=args.intensity, fade=args.fade,
-                     max_seconds=args.max_seconds, encoder=args.encoder)
+                     max_seconds=args.max_seconds, encoder=args.encoder, viz=args.viz)
 
 
 if __name__ == "__main__":
