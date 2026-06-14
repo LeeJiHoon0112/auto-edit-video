@@ -373,7 +373,11 @@ class App:
         line = ttk.Frame(f2)
         line.pack(fill="x", padx=10, pady=6)
         ttk.Label(line, text="Số giây mỗi cảnh:").pack(side="left")
-        ttk.Spinbox(line, from_=2, to=30, width=5, textvariable=self.secs).pack(side="left", padx=6)
+        # to=3600 chỉ giới hạn nút ▲▼; gõ tay vẫn nhập số bất kỳ. Cảnh DÀI (>10s) -> ẢNH TĨNH
+        # (Ken Burns kéo đủ giờ) cho video ngủ / video chậm, KHÔNG cần khớp clip Veo.
+        ttk.Spinbox(line, from_=2, to=3600, width=6, textvariable=self.secs).pack(side="left", padx=6)
+        ttk.Label(line, text="(2–10s: hợp clip Veo  ·  >10s: ẢNH TĨNH kéo dài — cho video ngủ)",
+                  foreground="#888").pack(side="left")
 
         fp = ttk.LabelFrame(f2, text="Kiểu sản xuất video")
         fp.pack(fill="x", padx=10, pady=(0, 6))

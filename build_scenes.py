@@ -24,7 +24,12 @@ VEO_LEVELS = [4, 6, 8, 10]   # các mức độ dài clip Veo chọn được
 
 
 def nearest_veo(dur):
-    """Chọn mức Veo gần nhất + % phải đổi tốc độ để khít cảnh."""
+    """Chọn mức Veo gần nhất + % phải đổi tốc độ để khít cảnh.
+    Cảnh DÀI hơn mức Veo tối đa (>10.5s) -> coi là ẢNH TĨNH: Ken Burns kéo đủ giờ
+    khi render, KHÔNG ép clip Veo (tránh hiển thị '% chậm' vô nghĩa). Dùng cho video
+    ngủ / video chậm khi user để 'Số giây mỗi cảnh' lớn (không cần khớp clip)."""
+    if dur > VEO_LEVELS[-1] + 0.5:        # >10.5s -> quá tầm clip Veo -> ảnh tĩnh
+        return "tĩnh", 0.0, "ẢNH TĨNH"
     level = min(VEO_LEVELS, key=lambda L: abs(L - dur))
     pct = (dur / level - 1) * 100         # >0: clip phải chậm lại ; <0: nhanh lên
     if abs(pct) < 1:
@@ -96,18 +101,25 @@ def main():
         w.writerows(rows)
 
     total = scenes[-1]["end"] - scenes[0]["start"]
-    pcts = [abs((r["dur"] / r["veo_sec"] - 1) * 100) for r in rows]
-    within15 = sum(1 for p in pcts if p <= 15)
+    clip_rows = [r for r in rows if isinstance(r["veo_sec"], int)]
+    static_n = len(rows) - len(clip_rows)
     print(f"• {len(segs)} đoạn SRT  ->  {len(rows)} CẢNH (mỗi cảnh ~{args.target:g}s) "
           f"| tổng {total:.1f}s")
     print(f"• Đã ghi: {os.path.abspath(args.out)}")
-    print(f"• Đổi tốc độ: trung bình {sum(pcts)/len(pcts):.1f}% | "
-          f"cao nhất {max(pcts):.1f}% | "
-          f"{within15}/{len(rows)} cảnh dưới 15% (gần như vô hình)")
-    print("\n--- 8 cảnh đầu (kèm mức Veo nên dùng) ---")
+    if clip_rows:
+        pcts = [abs((r["dur"] / r["veo_sec"] - 1) * 100) for r in clip_rows]
+        within15 = sum(1 for p in pcts if p <= 15)
+        print(f"• Đổi tốc độ (clip Veo): TB {sum(pcts)/len(pcts):.1f}% | "
+              f"cao nhất {max(pcts):.1f}% | "
+              f"{within15}/{len(clip_rows)} cảnh dưới 15% (gần như vô hình)")
+    if static_n:
+        print(f"• {static_n} cảnh > {VEO_LEVELS[-1]}s -> ẢNH TĨNH "
+              f"(Ken Burns kéo đủ giờ, không cần clip Veo)")
+    print("\n--- 8 cảnh đầu ---")
     for r in rows[:8]:
-        print(f"  Cảnh {r['scene']:>2} | {r['dur']:>5}s → Veo {r['veo_sec']}s "
-              f"({r['speed']:>9}) | {r['text'][:45]}")
+        veo_disp = (f"Veo {r['veo_sec']}s ({r['speed']})"
+                    if isinstance(r["veo_sec"], int) else r["speed"])
+        print(f"  Cảnh {r['scene']:>2} | {r['dur']:>6}s → {veo_disp:>16} | {r['text'][:45]}")
 
 
 if __name__ == "__main__":
