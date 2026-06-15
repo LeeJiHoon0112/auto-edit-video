@@ -226,6 +226,7 @@ class App:
         self.secs = tk.StringVar(value="8")
         self.kenburns = tk.BooleanVar(value=True)
         self.subs = tk.BooleanVar(value=True)
+        self.kara_color = tk.StringVar(value=self.cfg.get("kara_color", "#FFFF00"))
         self.crossfade = tk.BooleanVar(value=False)
         self.transition = tk.StringVar(value="fade")   # kiểu chuyển cảnh khi bật Crossfade (#2)
         self.color = tk.StringVar(value="none")        # màu phim (#3)
@@ -453,6 +454,16 @@ class App:
                      values=["fade", "fadeblack", "dissolve", "slideleft", "slideright",
                              "slideup", "wipeleft", "wiperight", "circleopen", "radial",
                              "zoomin", "pixelize"]).pack(side="left")
+
+        # Phụ đề 1 TỪ: mỗi lúc chỉ hiện đúng 1 từ theo nhịp voice — chọn màu chữ
+        linek = ttk.Frame(f2)
+        linek.pack(fill="x", padx=10, pady=(0, 8))
+        ttk.Label(linek, text="🖍 Phụ đề 1 TỪ theo voice — màu chữ:").pack(side="left")
+        self.kara_swatch = tk.Label(linek, width=3, relief="ridge",
+                                    bg=self._safe_bg(self.kara_color.get()))
+        self.kara_swatch.pack(side="left", padx=6)
+        ttk.Button(linek, text="Đổi màu", width=8,
+                   command=self._pick_kara_color).pack(side="left")
 
         # Màu phim + vignette + hạt phim (#3)
         line2 = ttk.Frame(f2)
@@ -1391,6 +1402,25 @@ class App:
         if p:
             self.bgm.set(p)
 
+    def _safe_bg(self, hexcol):
+        """Trả hex hợp lệ (#RRGGBB) để đặt nền swatch; sai -> vàng."""
+        import re
+        return hexcol if re.match(r"^#[0-9A-Fa-f]{6}$", str(hexcol or "")) else "#FFFF00"
+
+    def _pick_kara_color(self):
+        """Mở bảng chọn màu -> đặt màu chữ chạy karaoke, lưu nhớ."""
+        from tkinter import colorchooser
+        _, hx = colorchooser.askcolor(color=self._safe_bg(self.kara_color.get()),
+                                      title="Màu chữ chạy theo voice (karaoke)")
+        if hx:
+            self.kara_color.set(hx)
+            try:
+                self.kara_swatch.configure(bg=hx)
+            except Exception:
+                pass
+            self.cfg["kara_color"] = hx
+            save_config(self.cfg)
+
     # ============================ HÀNG ĐỢI ============================
     def _current_job(self):
         """Gói nguyên liệu đang chọn ở tab Làm video thành 1 'job' để render."""
@@ -1403,6 +1433,7 @@ class App:
             "color": self.color.get(), "vignette": self.vignette.get(),
             "grain": self.grain.get(), "bgm": self.bgm.get(),
             "bgm_volume": self.bgm_volume.get(), "duck": self.duck.get(),
+            "kara_color": self.kara_color.get(),
         }
 
     def _job_cmd(self, job, preview=False):
@@ -1419,6 +1450,10 @@ class App:
             cmd += ["--no-kenburns"]
         if not job.get("subs", True):
             cmd += ["--no-subtitles"]
+        else:
+            kc = (job.get("kara_color") or "").strip()
+            if kc:
+                cmd += ["--karaoke-color", kc]
         if job.get("crossfade", False):
             cmd += ["--transition", job.get("transition") or "fade"]
         if job.get("color") and job["color"] != "none":

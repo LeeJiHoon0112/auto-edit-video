@@ -69,6 +69,7 @@ SUB_OUTLINE = 4            # độ dày viền đen (px)
 SUB_SHADOW = 2             # độ đổ bóng (px)
 SUB_MARGIN_V = 70          # khoảng cách từ ĐÁY lên (px) — số NHỎ = sát đáy hơn
 SUB_UPPERCASE = True       # IN HOA toàn bộ phụ đề (False = giữ hoa/thường)
+SUB_KARAOKE_COLOR = "#FFFF00"  # màu chữ khi voice đọc TỚI (karaoke highlight); app chỉnh được
 
 
 def _ass_time(t):
@@ -77,13 +78,44 @@ def _ass_time(t):
     return f"{h}:{m:02d}:{int(s):02d}.{int(round((s - int(s)) * 100)):02d}"
 
 
-def _write_ass(srt_path, ass_path, width, height):
-    """Chuyển SRT -> ASS với PlayResX/Y = kích thước video (pixel thật).
-    Phụ đề canh GIỮA-DƯỚI, IN HOA (nếu bật), chữ trắng viền đen dày + bóng."""
+def _hex_to_ass(hexcol, default="&H0000FFFF"):
+    """#RRGGBB -> ASS &H00BBGGRR (ASS dùng thứ tự BGR). Lỗi -> vàng mặc định."""
+    try:
+        h = str(hexcol).lstrip("#")
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        return f"&H00{b:02X}{g:02X}{r:02X}"
+    except Exception:
+        return default
+
+
+def _split_word_times(seg):
+    """Trả [(word, start, end), ...] cho 1 đoạn SRT: chia thời lượng câu cho từng TỪ theo
+    TỈ LỆ SỐ KÝ TỰ (SRT chỉ có mốc theo CÂU -> từ dài giữ lâu hơn, gần khớp giọng). Từ cuối
+    kéo tới hết câu -> các từ nối liền mạch, không hở."""
+    words = " ".join(seg["text"].split()).split(" ")
+    if SUB_UPPERCASE:
+        words = [w.upper() for w in words]
+    weights = [max(1, len(w)) for w in words]
+    tw = sum(weights) or 1
+    total = max(0.0, seg["end"] - seg["start"])
+    out, t = [], seg["start"]
+    for i, w in enumerate(words):
+        d = total * weights[i] / tw if i < len(words) - 1 else max(0.01, seg["end"] - t)
+        out.append((w, t, t + d))
+        t += d
+    return out
+
+
+def _write_ass(srt_path, ass_path, width, height, karaoke_color=SUB_KARAOKE_COLOR):
+    """SRT -> ASS kiểu 1 TỪ: mỗi thời điểm chỉ hiện ĐÚNG 1 từ theo nhịp voice (audio nói
+    từ nào -> hiện từ đó, KHÔNG hiện cả câu). Mỗi từ = 1 Dialogue [word_start, word_end];
+    thời lượng chia theo số ký tự trong câu. Màu chữ = karaoke_color. Canh GIỮA-DƯỚI, IN
+    HOA (nếu bật), viền đen dày + bóng. PlayResX/Y = pixel thật."""
     segs = parse_srt(srt_path)
     bold = -1
+    prim = _hex_to_ass(karaoke_color)                # màu chữ của từ
     style = (f"Style: Default,{SUB_FONT},{SUB_SIZE},"
-             f"&H00FFFFFF,&H000000FF,&H00000000,&H80000000,"
+             f"{prim},&H00FFFFFF,&H00000000,&H80000000,"
              f"{bold},0,0,0,100,100,0,0,1,{SUB_OUTLINE},{SUB_SHADOW},"
              f"2,60,60,{SUB_MARGIN_V},1")
     head = (
@@ -100,11 +132,9 @@ def _write_ass(srt_path, ass_path, width, height):
     )
     lines = [head]
     for s in segs:
-        txt = " ".join(s["text"].split())            # gộp về 1 dòng, bỏ xuống dòng
-        if SUB_UPPERCASE:
-            txt = txt.upper()
-        lines.append(f"Dialogue: 0,{_ass_time(s['start'])},{_ass_time(s['end'])},"
-                     f"Default,,0,0,0,,{txt}\n")
+        for w, ws, we in _split_word_times(s):
+            lines.append(f"Dialogue: 0,{_ass_time(ws)},{_ass_time(we)},"
+                         f"Default,,0,0,0,,{w}\n")
     with open(ass_path, "w", encoding="utf-8") as f:
         f.write("".join(lines))
 
@@ -536,6 +566,8 @@ def main():
                          "nếu có clip -> hết rung; 30 nếu toàn ảnh tĩnh (Ken Burns mượt).")
     ap.add_argument("--no-kenburns", action="store_true")
     ap.add_argument("--no-subtitles", action="store_true")
+    ap.add_argument("--karaoke-color", default=SUB_KARAOKE_COLOR,
+                    help="Màu chữ chạy karaoke khi voice đọc tới (hex #RRGGBB), vd #FFFF00 vàng")
     # --- Màu phim (#3) ---
     ap.add_argument("--color", choices=["none", "cinematic", "cold", "warm", "bw"],
                     default="none",
@@ -746,7 +778,7 @@ def main():
         if not args.no_subtitles:
             # ASS (tên ascii, trong temp) PlayResX/Y = kích thước video -> phụ đề đúng pixel thật.
             subs = os.path.join(tmp, "subs.ass")
-            _write_ass(args.srt, subs, WIDTH, HEIGHT)
+            _write_ass(args.srt, subs, WIDTH, HEIGHT, args.karaoke_color)
             cwd = tmp                       # chạy ffmpeg trong temp -> path phụ đề tương đối
             vchain.append("subtitles=subs.ass")
 
