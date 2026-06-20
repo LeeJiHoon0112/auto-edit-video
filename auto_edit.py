@@ -142,17 +142,34 @@ def _write_ass(srt_path, ass_path, width, height, karaoke_color=SUB_KARAOKE_COLO
 # ----------------------------------------------------------------------------
 # Tìm FFmpeg / FFprobe (PATH hoặc thư mục cài WinGet)
 # ----------------------------------------------------------------------------
+def _app_dir():
+    """Thư mục chứa .exe (bản đóng gói Nuitka/PyInstaller) hoặc chứa script (dev).
+    Dùng để dò ffmpeg GIAO KÈM đặt cạnh tool -> khách khỏi cài FFmpeg."""
+    if getattr(sys, "frozen", False) or ("__compiled__" in globals()):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
 def find_tool(name):
+    exe = name + (".exe" if os.name == "nt" else "")
+    # 1) Ffmpeg GIAO KÈM cạnh .exe (hoặc thư mục con ffmpeg/bin) -> ưu tiên, khách khỏi cài
+    app = _app_dir()
+    for cand in (os.path.join(app, exe),
+                 os.path.join(app, "ffmpeg", exe),
+                 os.path.join(app, "ffmpeg", "bin", exe),
+                 os.path.join(app, "bin", exe)):
+        if os.path.isfile(cand):
+            return cand
+    # 2) PATH
     p = shutil.which(name)
     if p:
         return p
-    # Dò trong thư mục WinGet (PATH có thể chưa refresh sau khi cài)
+    # 3) Dò thư mục WinGet / cài sẵn (PATH có thể chưa refresh sau khi cài)
     roots = [
         os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WinGet\Packages"),
         os.path.expandvars(r"%PROGRAMFILES%\ffmpeg"),
         r"C:\ffmpeg",
     ]
-    exe = name + (".exe" if os.name == "nt" else "")
     for root in roots:
         if not os.path.isdir(root):
             continue

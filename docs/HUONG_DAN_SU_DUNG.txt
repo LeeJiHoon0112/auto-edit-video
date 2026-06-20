@@ -4,12 +4,12 @@
 Hỗ trợ: Zalo 0827298265
 
 --------------------------------------------------
-BƯỚC 1 — CÀI FFMPEG (bắt buộc, để render video)
+BƯỚC 1 — GIỮ NGUYÊN THƯ MỤC (FFmpeg đã kèm sẵn)
 --------------------------------------------------
-Cách nhanh (Windows 10/11): mở PowerShell và gõ:
-    winget install Gyan.FFmpeg
-Hoặc tải thủ công tại https://ffmpeg.org/ rồi thêm thư mục bin vào PATH.
-(Không có FFmpeg thì tool mở được nhưng KHÔNG render được.)
+Tool ĐÃ kèm sẵn ffmpeg.exe + ffprobe.exe trong cùng thư mục với AutoEditVideo.exe.
+=> KHÔNG cần cài FFmpeg.
+Chỉ cần GIỮ cả 3 file (AutoEditVideo.exe, ffmpeg.exe, ffprobe.exe) trong CÙNG 1 thư mục,
+không tách rời nhau. Giải nén xong là chạy được ngay.
 
 --------------------------------------------------
 BƯỚC 2 — MỞ TOOL & KÍCH HOẠT BẢN QUYỀN (lần đầu)

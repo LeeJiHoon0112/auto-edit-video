@@ -32,7 +32,10 @@ echo  Mo config.py sua thanh:  LICENSE_ENABLED = True  roi chay lai build nay.
 goto :end
 
 :done
-echo XONG! File giao khach: release\AutoEditVideo.exe
+echo Copy ffmpeg + ffprobe vao release (de khach KHOI CAI ffmpeg)...
+python -c "import auto_edit,shutil; ff=auto_edit.find_tool('ffmpeg'); fp=auto_edit.find_tool('ffprobe'); (shutil.copy(ff,'release') if ff else None); (shutil.copy(fp,'release') if fp else None); print('  ffmpeg :',ff); print('  ffprobe:',fp)"
+echo.
+echo XONG! Giao cho khach CA THU MUC release\ (AutoEditVideo.exe + ffmpeg.exe + ffprobe.exe).
 echo Giao kem: docs\HUONG_DAN_SU_DUNG.txt + license key (tao o admin, product = aev).
 echo TUYET DOI KHONG giao kem config.local.json - file do chua API key cua ban.
 
