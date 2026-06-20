@@ -1,0 +1,49 @@
+========================================
+ HƯỚNG DẪN SỬ DỤNG — AUTO EDIT VIDEO
+========================================
+Hỗ trợ: Zalo 0827298265
+
+--------------------------------------------------
+BƯỚC 1 — CÀI FFMPEG (bắt buộc, để render video)
+--------------------------------------------------
+Cách nhanh (Windows 10/11): mở PowerShell và gõ:
+    winget install Gyan.FFmpeg
+Hoặc tải thủ công tại https://ffmpeg.org/ rồi thêm thư mục bin vào PATH.
+(Không có FFmpeg thì tool mở được nhưng KHÔNG render được.)
+
+--------------------------------------------------
+BƯỚC 2 — MỞ TOOL & KÍCH HOẠT BẢN QUYỀN (lần đầu)
+--------------------------------------------------
+1. Chạy file AutoEditVideo.exe
+2. Cửa sổ "Kích hoạt bản quyền" hiện ra:
+   - Bấm "Copy" để lấy MÃ MÁY, gửi cho người bán (Zalo 0827298265).
+   - Nhận được LICENSE KEY -> dán vào ô -> bấm "Kích hoạt".
+3. Kích hoạt xong: dùng offline khoảng 10 ngày, tự gia hạn mỗi khi có mạng.
+   Thanh trên cùng hiển thị gói + số ngày còn lại.
+
+* Mỗi key chỉ dùng cho số máy nhất định. Đổi máy mới cần báo người bán.
+
+--------------------------------------------------
+BƯỚC 3 — NHẬP API KEY AI (cho tính năng Tạo Prompt)
+--------------------------------------------------
+Vào tab "Cài đặt":
+   - Chọn nhà cung cấp (OpenAI / Gemini / Claude)
+   - Dán API KEY CỦA BẠN -> bấm Lưu -> Kiểm tra kết nối.
+Lưu ý: key này là TÀI KHOẢN CỦA BẠN, chi phí AI tính theo tài khoản của bạn.
+(Phần Render video KHÔNG cần API key — chỉ cần khi muốn AI tự viết prompt.)
+
+--------------------------------------------------
+BƯỚC 4 — QUY TRÌNH LÀM VIDEO
+--------------------------------------------------
+1. Tab "Tạo Prompt": chọn file SRT + Style Profile -> bấm "Tạo Prompt".
+   -> Lấy prompt đưa vào Veo (hoặc tool ảnh) tạo clip/ảnh, đặt tên 01, 02, ...
+2. Bỏ các clip/ảnh vào 1 thư mục.
+3. Tab "Render Video": chọn thư mục clip + file giọng đọc (voice) -> "Render".
+   -> Ra file MP4 hoàn chỉnh (có phụ đề chạy theo giọng).
+
+Ngoài ra: tab "Video ngủ" tạo video dài 3-4 tiếng từ 1 clip/ảnh nền + audio dài.
+
+--------------------------------------------------
+HỖ TRỢ
+--------------------------------------------------
+Mọi vướng mắc liên hệ Zalo: 0827298265

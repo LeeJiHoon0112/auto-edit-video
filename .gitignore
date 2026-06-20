@@ -48,3 +48,11 @@ Context.md
 
 # Token ghi nhớ đăng nhập (mỗi máy tự lưu, KHÔNG commit)
 session.local.json
+
+# ===== Build .exe (Nuitka) — KHÔNG commit (file rất lớn) =====
+release/
+*.build/
+*.dist/
+*.onefile-build/
+*.exe
+
