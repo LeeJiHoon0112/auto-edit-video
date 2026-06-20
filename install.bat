@@ -1,9 +1,9 @@
 @echo off
 cd /d "%~dp0"
-title Cai dat Auto Edit Video
+title Cai dat PeiPei Auto Edit Video
 echo.
 echo  ==============================================
-echo       CAI DAT AUTO EDIT VIDEO
+echo       CAI DAT PEIPEI AUTO EDIT VIDEO
 echo  ==============================================
 echo.
 echo  File nay se kiem tra va cai: Python va FFmpeg.

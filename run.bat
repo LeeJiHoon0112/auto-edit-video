@@ -1,8 +1,8 @@
 @echo off
 cd /d "%~dp0"
-title Auto Edit Video
+title PeiPei Auto Edit Video
 
-echo  Dang mo Auto Edit Video...
+echo  Dang mo PeiPei Auto Edit Video...
 
 rem Mo app bang trinh chay Python KHONG console.
 rem Uu tien pyw (luon co trong C:\Windows), roi pythonw, roi duong dan day du.

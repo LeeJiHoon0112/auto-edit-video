@@ -109,7 +109,7 @@ def license_gate(root):
 def _activate_dialog(root, lic, st):
     """Hộp thoại kích hoạt. Trả True nếu activate thành công + license VALID/GRACE."""
     win = tk.Toplevel(root)
-    win.title("Kích hoạt bản quyền — Auto Edit Video")
+    win.title("Kích hoạt bản quyền — PeiPei Auto Edit Video")
     win.resizable(False, False)
     win.grab_set()
     result = {"ok": False}
@@ -200,7 +200,7 @@ class App:
         self.root = root
         self.cfg = load_config()
         self.q = queue.Queue()
-        root.title("Auto Edit Video 🎬")
+        root.title("PeiPei Auto Edit Video 🎬")
         root.geometry("880x720")
         root.minsize(780, 640)
 

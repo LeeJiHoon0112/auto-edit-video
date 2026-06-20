@@ -2,7 +2,7 @@
 chcp 65001 >nul
 cd /d "%~dp0"
 echo ============================================================
-echo  BUILD Auto Edit Video - dong goi 1 file .exe bang Nuitka
+echo  BUILD PeiPei Auto Edit Video - dong goi 1 file .exe bang Nuitka
 echo  An toan: .exe KHONG kem config.local.json / access.json /
 echo  session.local.json (API key + license may ban).
 echo ============================================================

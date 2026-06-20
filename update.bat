@@ -1,9 +1,9 @@
 @echo off
 cd /d "%~dp0"
-title Cap nhat Auto Edit Video
+title Cap nhat PeiPei Auto Edit Video
 echo.
 echo  ============================================
-echo      CAP NHAT AUTO EDIT VIDEO
+echo      CAP NHAT PEIPEI AUTO EDIT VIDEO
 echo  ============================================
 echo.
 
