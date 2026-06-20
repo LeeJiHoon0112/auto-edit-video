@@ -325,6 +325,15 @@ class App:
         # Tự cập nhật tiêu đề khi Boss chọn file SRT khác
         self.srt.trace_add("write", self._on_srt_change)
 
+        # Thanh TRÊN CÙNG (ngay dưới tiêu đề): license (gói + hạn còn lại) trái +
+        # hỗ trợ Zalo (xanh lá) phải
+        header = ttk.Frame(root)
+        header.pack(fill="x", side="top", padx=8, pady=(4, 0))
+        self.lic_status = tk.StringVar(value="")
+        ttk.Label(header, textvariable=self.lic_status, anchor="w").pack(side="left")
+        tk.Label(header, text="Hỗ trợ Zalo : 0827298265", fg="#1aa64b",
+                 font=("", 9, "bold")).pack(side="right")
+
         # Khung trên: SIDEBAR trái + nội dung phải
         top = ttk.Frame(root)
         top.pack(fill="both", expand=True, padx=6, pady=6)
@@ -368,6 +377,7 @@ class App:
         ttk.Label(root, textvariable=self.status, anchor="w",
                   relief="sunken").pack(fill="x", side="bottom")
 
+        self._refresh_license_label()
         self._show_page("prompt")
         self.root.after(100, self._drain)
 
@@ -397,6 +407,18 @@ class App:
         self.pages[name].pack(fill="both", expand=True)
         for n, b in self._side_btns.items():
             b.configure(bg=("#cfe2ff" if n == name else "#f0f0f0"))
+
+    def _refresh_license_label(self):
+        """Hiện gói + số ngày còn lại của license (chỉ khi bản BÁN bật license; dev thì ẩn)."""
+        try:
+            import config
+            if getattr(config, "LICENSE_ENABLED", False):
+                import license_client as lic
+                self.lic_status.set(lic.status_text())
+            else:
+                self.lic_status.set("")
+        except Exception:
+            self.lic_status.set("")
 
     # ============================ TRANG TẠO PROMPT ============================
     def _build_prompt(self, parent):
