@@ -11,3 +11,8 @@
 #   google-generativeai
 #   openai
 #   anthropic )
+
+# ---- LICENSE (kích hoạt bản quyền, chỉ cần khi LICENSE_ENABLED=True / build bản bán) ----
+# Khi đóng gói .exe bằng Nuitka nhớ: --include-package=cryptography
+requests
+cryptography

@@ -190,6 +190,79 @@ def password_gate(root):
     return False
 
 
+# ============================ LICENSE GATE ============================
+# Thay mật khẩu bằng kích hoạt bản quyền (hybrid Ed25519, dùng chung server với tool khác).
+# Chỉ chạy khi config.LICENSE_ENABLED = True (bản BÁN); dev để False -> vào tự do.
+def license_gate(root):
+    """Cổng license khi mở app. True = được vào; False = thoát.
+    refresh() best-effort (gia hạn + bắt revoke) -> check() offline -> nếu chưa hợp lệ thì
+    mở hộp thoại kích hoạt (hiện Machine ID cho khách gửi người bán + ô dán key)."""
+    import license_client as lic
+    try:
+        lic.refresh()                       # offline thì tự bỏ qua, giữ token (grace)
+    except Exception:
+        pass
+    st = lic.check()
+    if st.get("status") in ("VALID", "GRACE"):
+        return True
+    return _activate_dialog(root, lic, st)
+
+
+def _activate_dialog(root, lic, st):
+    """Hộp thoại kích hoạt. Trả True nếu activate thành công + license VALID/GRACE."""
+    win = tk.Toplevel(root)
+    win.title("Kích hoạt bản quyền — Auto Edit Video")
+    win.resizable(False, False)
+    win.grab_set()
+    result = {"ok": False}
+    mid = lic.get_machine_id()
+
+    frm = ttk.Frame(win, padding=16)
+    frm.pack(fill="both", expand=True)
+    ttk.Label(frm, text="Phần mềm cần kích hoạt bản quyền để sử dụng.",
+              font=("Segoe UI", 10, "bold")).pack(anchor="w")
+    if st.get("message"):
+        ttk.Label(frm, text=st["message"], foreground="#a00").pack(anchor="w", pady=(2, 8))
+
+    ttk.Label(frm, text="Mã máy (gửi mã này cho người bán để lấy key):").pack(anchor="w")
+    midrow = ttk.Frame(frm)
+    midrow.pack(fill="x", pady=(2, 10))
+    ttk.Entry(midrow, textvariable=tk.StringVar(value=mid), width=34,
+              state="readonly").pack(side="left")
+    ttk.Button(midrow, text="Copy", width=7,
+               command=lambda: (win.clipboard_clear(), win.clipboard_append(mid))).pack(
+                   side="left", padx=6)
+
+    ttk.Label(frm, text="Dán license key:").pack(anchor="w")
+    kvar = tk.StringVar()
+    ttk.Entry(frm, textvariable=kvar, width=46).pack(fill="x", pady=(2, 6))
+    status = ttk.Label(frm, text="", foreground="#a00")
+    status.pack(anchor="w")
+
+    def _do_activate():
+        key = kvar.get().strip()
+        if not key:
+            status.config(text="Hãy dán license key.", foreground="#a00")
+            return
+        status.config(text="Đang kích hoạt...", foreground="#333")
+        win.update()
+        ok, msg = lic.activate(key)
+        if ok and lic.check().get("status") in ("VALID", "GRACE"):
+            result["ok"] = True
+            win.destroy()
+        else:
+            status.config(text=msg or "Kích hoạt thất bại.", foreground="#a00")
+
+    btns = ttk.Frame(frm)
+    btns.pack(fill="x", pady=(10, 0))
+    ttk.Button(btns, text="Kích hoạt", command=_do_activate).pack(side="left")
+    ttk.Button(btns, text="Thoát", command=win.destroy).pack(side="right")
+
+    win.protocol("WM_DELETE_WINDOW", win.destroy)
+    win.wait_window()
+    return result["ok"]
+
+
 def dflt(*parts):
     return os.path.join(HERE, *parts)
 
@@ -1692,12 +1765,18 @@ class App:
 def main():
     selftest = "--selftest" in sys.argv
     root = tk.Tk()
-    if not selftest and has_password():       # hỏi mật khẩu trước khi vào (nếu đã đặt)
-        root.withdraw()
-        if not password_gate(root):
-            root.destroy()
-            return
-        root.deiconify()
+    if not selftest:
+        try:
+            import config
+            license_on = bool(getattr(config, "LICENSE_ENABLED", False))
+        except Exception:
+            license_on = False
+        if license_on:                        # bản BÁN: thay mật khẩu bằng kích hoạt LICENSE
+            root.withdraw()
+            if not license_gate(root):
+                root.destroy()
+                return
+            root.deiconify()
     App(root)
     if selftest:
         root.update()
