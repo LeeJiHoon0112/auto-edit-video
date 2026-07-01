@@ -607,6 +607,8 @@ class App:
         bar.pack(fill="x", padx=8, pady=8)
         self.btn_sleep = ttk.Button(bar, text="🌙  TẠO VIDEO NGỦ", command=self.run_sleep)
         self.btn_sleep.pack(side="left", padx=4)
+        ttk.Button(bar, text="👁️ Xem trước (20s)",
+                   command=lambda: self.run_sleep(preview=True)).pack(side="left", padx=4)
         ttk.Button(bar, text="📂 Mở thư mục xuất",
                    command=self._open_sleep_dir).pack(side="right", padx=4)
 
@@ -623,7 +625,7 @@ class App:
         else:
             messagebox.showinfo("Chưa có", "Chưa có thư mục xuất — tạo video ngủ trước.")
 
-    def run_sleep(self):
+    def run_sleep(self, preview=False):
         bg = (self.sleep_bg.get() or "").strip()
         audio = (self.sleep_audio.get() or "").strip()
         if not os.path.isfile(bg):
@@ -633,6 +635,8 @@ class App:
             messagebox.showwarning("Thiếu", "Chưa chọn file audio dài.")
             return
         out = (self.sleep_out.get() or "").strip() or dflt("output", "sleep.mp4")
+        if preview:                                   # xem trước -> file RIÊNG, không đè bản chính
+            out = os.path.splitext(out)[0] + "_preview.mp4"
         try:
             fv = float(self.sleep_fade.get())
         except (TypeError, ValueError):
@@ -645,12 +649,14 @@ class App:
         if amb and os.path.isfile(amb):
             cmd += ["--ambient", amb,
                     "--ambient-volume", (self.sleep_ambient_vol.get() or "0.25").strip()]
+        if preview:
+            cmd += ["--max-seconds", "20"]            # chỉ render 20s để xem/nghe thử
 
         self.log.delete("1.0", "end")
-        self._log("$ tạo video ngủ...\n\n")
+        self._log("$ xem trước video ngủ (20 giây)...\n\n" if preview else "$ tạo video ngủ...\n\n")
         self._busy(True)
         self.rendering = True
-        self.status.set("Đang tạo video ngủ...")
+        self.status.set("Đang tạo bản xem trước..." if preview else "Đang tạo video ngủ...")
 
         def worker():
             try:
@@ -665,9 +671,16 @@ class App:
                     self.q.put(("line", line))
                 p.wait()
                 ok = (p.returncode == 0)
-                self._add_history(out, ok)
+                if not preview:
+                    self._add_history(out, ok)
                 self.q.put(("queue_finished", None))
-                if ok:
+                if ok and preview:
+                    try:
+                        os.startfile(out)                 # tự mở bản xem trước cho xem/nghe
+                    except Exception:  # noqa
+                        pass
+                    self.q.put(("done", f"✅ Xem trước xong (20s): {out}"))
+                elif ok:
                     self.q.put(("done", f"✅ Video ngủ xong: {out}"))
                 else:
                     self.q.put(("done", f"Tạo video ngủ thất bại (mã {p.returncode}). Xem nhật ký."))
