@@ -230,6 +230,8 @@ class App:
         self.sleep_intensity = tk.StringVar(value="vua")
         self.sleep_fade = tk.StringVar(value="4")
         self.sleep_viz = tk.StringVar(value="none")    # visualizer âm thanh
+        self.sleep_ambient = tk.StringVar(value="")    # âm thanh nền phụ (mưa/gió/tuyết)
+        self.sleep_ambient_vol = tk.StringVar(value="0.25")
         # Thư mục lưu prompt + scenes.csv (TÙY CHỌN). Trống = lưu ở gốc dự án (đè như cũ).
         self.prompt_dir = tk.StringVar(value=self.cfg.get("prompt_dir", ""))
         # File bảng cảnh scenes.csv CHỌN TAY (TÙY CHỌN). Trống = tự tìm. Chọn để chắc
@@ -294,6 +296,7 @@ class App:
         self._refresh_license_label()
         self._show_page("prompt")
         self.root.after(100, self._drain)
+        self._check_update_async()          # tự hỏi server có bản mới không (nền)
 
         # Theo dõi tiến trình render để bảo vệ khi đóng app giữa chừng (#8)
         self.render_procs = []          # các subprocess render đang chạy
@@ -333,6 +336,46 @@ class App:
                 self.lic_status.set("")
         except Exception:
             self.lic_status.set("")
+
+    def _check_update_async(self):
+        """Hỏi server có bản mới không (chạy NỀN để không chặn khởi động). Chỉ chạy ở bản
+        BÁN (LICENSE_ENABLED). Có bản mới -> thông báo + mở link tải (khách tự cập nhật)."""
+        try:
+            import config
+            if not getattr(config, "LICENSE_ENABLED", False):
+                return
+        except Exception:
+            return
+
+        def worker():
+            try:
+                import license_client as lic
+                info = lic.check_update()          # None nếu không có bản mới / offline
+            except Exception:
+                info = None
+            if info:
+                self.root.after(0, lambda: self._show_update(info))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _show_update(self, info):
+        """Thông báo có bản mới; nếu có link thì hỏi mở trình duyệt để tải."""
+        latest = info.get("latest", "?")
+        url = (info.get("url") or "").strip()
+        note = (info.get("message") or "").strip()
+        text = f"Đã có phiên bản mới: {latest}."
+        if note:
+            text += f"\n{note}"
+        if url:
+            text += "\n\nMở trang tải bản mới ngay?"
+            if messagebox.askyesno("🔔 Có bản cập nhật mới", text):
+                try:
+                    import webbrowser
+                    webbrowser.open(url)
+                except Exception:
+                    pass
+        else:
+            messagebox.showinfo("🔔 Có bản cập nhật mới", text)
 
     # ============================ TRANG TẠO PROMPT ============================
     def _build_prompt(self, parent):
@@ -521,8 +564,11 @@ class App:
         self._row(f1, "🎬 NỀN (clip / ảnh):", self.sleep_bg, lambda: self._pick_file(
             self.sleep_bg, [("Clip / Ảnh", "*.mp4 *.mov *.mkv *.webm *.jpg *.jpeg *.png"),
                             ("Tất cả", "*.*")]))
-        self._row(f1, "🎵 AUDIO dài:", self.sleep_audio, lambda: self._pick_file(
+        self._row(f1, "🎵 AUDIO dài (kịch bản):", self.sleep_audio, lambda: self._pick_file(
             self.sleep_audio, [("Audio", "*.mp3 *.wav *.m4a *.aac"), ("Tất cả", "*.*")]))
+        self._row(f1, "🌧️ Âm thanh NỀN (mưa/gió/tuyết — tùy chọn):", self.sleep_ambient,
+                  lambda: self._pick_file(self.sleep_ambient,
+                  [("Audio", "*.mp3 *.wav *.m4a *.aac *.ogg"), ("Tất cả", "*.*")]))
         self._row(f1, "Xuất ra MP4:", self.sleep_out, self._pick_sleep_out)
         ttk.Label(f1, foreground="#888", wraplength=640,
                   text="Clip nền ngắn (vd 10s) tự LOOP LIỀN MẠCH (crossfade) cho hết audio, GIỮ "
@@ -543,6 +589,14 @@ class App:
         ttk.Label(line, text="🎵 Visualizer:").pack(side="left", padx=(16, 2))
         ttk.Combobox(line, width=7, state="readonly", textvariable=self.sleep_viz,
                      values=["none", "bars", "waves"]).pack(side="left")
+        line2 = ttk.Frame(f2)
+        line2.pack(fill="x", padx=10, pady=(0, 6))
+        ttk.Label(line2, text="🔊 Âm lượng âm thanh nền:").pack(side="left")
+        ttk.Spinbox(line2, from_=0.0, to=1.0, increment=0.05, width=5,
+                    textvariable=self.sleep_ambient_vol).pack(side="left", padx=(4, 0))
+        ttk.Label(line2, foreground="#888",
+                  text="(0.15 = rất nhẹ · 0.25 = nhẹ · 0.5 = rõ). Chỉ áp dụng khi có chọn "
+                       "file âm thanh nền ở trên.").pack(side="left", padx=8)
         ttk.Label(f2, foreground="#888", wraplength=640,
                   text="Để hiệu ứng 'none' nếu nền đã đẹp (vd clip cảnh có sẵn). Hiệu ứng tự tạo "
                        "(mưa/tuyết/sương/bokeh) chỉ cho nền ẢNH TĨNH. ⚠️ Visualizer (bars/waves) "
@@ -587,6 +641,10 @@ class App:
                "--bg", bg, "--audio", audio, "--out", out,
                "--effect", self.sleep_effect.get(), "--intensity", self.sleep_intensity.get(),
                "--fade", f"{fv}", "--viz", self.sleep_viz.get()]
+        amb = (self.sleep_ambient.get() or "").strip()
+        if amb and os.path.isfile(amb):
+            cmd += ["--ambient", amb,
+                    "--ambient-volume", (self.sleep_ambient_vol.get() or "0.25").strip()]
 
         self.log.delete("1.0", "end")
         self._log("$ tạo video ngủ...\n\n")
