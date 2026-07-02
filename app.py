@@ -366,14 +366,19 @@ class App:
         threading.Thread(target=worker, daemon=True).start()
 
     def _show_update(self, info):
-        """Thông báo có bản mới; nếu có link thì hỏi mở trình duyệt để tải."""
+        """Thông báo có bản mới. Bản .exe (frozen) -> hỏi CẬP NHẬT NGAY (tự tải + tự thay +
+        khởi động lại). Dev / không có link -> chỉ mở trang tải."""
         latest = info.get("latest", "?")
         url = (info.get("url") or "").strip()
         note = (info.get("message") or "").strip()
         text = f"Đã có phiên bản mới: {latest}."
         if note:
             text += f"\n{note}"
-        if url:
+        if url and _is_frozen():
+            text += "\n\nCẬP NHẬT NGAY? (app tự tải + tự cài + khởi động lại — bạn không cần làm gì)"
+            if messagebox.askyesno("🔔 Có bản cập nhật mới", text):
+                self._do_self_update(url)
+        elif url:
             text += "\n\nMở trang tải bản mới ngay?"
             if messagebox.askyesno("🔔 Có bản cập nhật mới", text):
                 try:
@@ -383,6 +388,58 @@ class App:
                     pass
         else:
             messagebox.showinfo("🔔 Có bản cập nhật mới", text)
+
+    def _do_self_update(self, url):
+        """FULL-AUTO update (chỉ bản .exe): tải .exe mới -> đổi tên bản đang chạy thành .old
+        -> đặt bản mới vào đúng tên (Windows cho RENAME file .exe đang chạy) -> mở bản mới ->
+        thoát bản cũ. File .old sẽ được dọn ở lần mở app kế tiếp."""
+        exe = _self_exe()
+        newexe, oldexe = exe + ".new", exe + ".old"
+        self._busy(True)
+        self.rendering = True                     # chặn đóng app giữa chừng
+        self.log.delete("1.0", "end")
+        self._log("$ đang tải bản cập nhật...\n\n")
+        self.status.set("Đang tải bản cập nhật...")
+
+        def worker():
+            try:
+                import requests
+                with requests.get(url, stream=True, timeout=120) as r:
+                    r.raise_for_status()
+                    total = int(r.headers.get("content-length", 0))
+                    got = 0
+                    with open(newexe, "wb") as f:
+                        for chunk in r.iter_content(chunk_size=1 << 20):
+                            if not chunk:
+                                continue
+                            f.write(chunk)
+                            got += len(chunk)
+                            if total:
+                                self.q.put(("line", f"   ...tải {got * 100 // total}%\n"))
+                if os.path.getsize(newexe) < 200_000:      # .exe thật ~12MB; quá nhỏ = lỗi
+                    raise RuntimeError("File tải về không hợp lệ (quá nhỏ).")
+                if os.path.exists(oldexe):
+                    try:
+                        os.remove(oldexe)
+                    except OSError:
+                        pass
+                os.rename(exe, oldexe)             # đổi tên file ĐANG CHẠY (Windows cho phép)
+                try:
+                    os.rename(newexe, exe)         # đặt bản mới vào đúng tên
+                except Exception:
+                    os.rename(oldexe, exe)         # lỗi -> khôi phục bản cũ
+                    raise
+                subprocess.Popen([exe], cwd=os.path.dirname(exe) or None)   # mở bản mới
+                self.q.put(("selfupdate_done", None))                       # -> thoát bản cũ
+            except Exception as e:  # noqa
+                try:
+                    if os.path.exists(newexe):
+                        os.remove(newexe)
+                except OSError:
+                    pass
+                self.q.put(("done", f"Cập nhật thất bại: {e}"))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     # ============================ TRANG TẠO PROMPT ============================
     def _build_prompt(self, parent):
@@ -1104,6 +1161,10 @@ class App:
                             os.startfile(path)
                         except Exception:  # noqa
                             pass
+                elif kind == "selfupdate_done":
+                    self.rendering = False
+                    self.root.destroy()          # bản mới đã mở -> thoát bản cũ
+                    return
                 elif kind == "done":
                     self._busy(False)
                     self.rendering = False           # hết render -> cho đóng app tự do
@@ -1711,8 +1772,20 @@ class App:
         threading.Thread(target=worker, daemon=True).start()
 
 
+def _cleanup_old_exe():
+    """Dọn file .exe.old còn sót sau lần TỰ CẬP NHẬT (best-effort, không lỗi nếu thất bại)."""
+    try:
+        if _is_frozen():
+            old = _self_exe() + ".old"
+            if os.path.exists(old):
+                os.remove(old)
+    except Exception:  # noqa
+        pass
+
+
 def main():
     selftest = "--selftest" in sys.argv
+    _cleanup_old_exe()
     root = tk.Tk()
     if not selftest:
         try:
