@@ -98,14 +98,16 @@ def _seamless_video_loop(clip, tmp):
     d = ae.probe_duration(clip) or 10.0
     cf = min(1.2, max(0.4, d / 6.0))           # thời lượng crossfade (giây)
     out = os.path.join(tmp, "loopclip.mp4")
-    fc = (f"[0:v]scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase,"
-          f"crop={WIDTH}:{HEIGHT},fps={FPS},setsar=1[v];"
-          f"[v]split[base][tail];"
-          f"[base]trim=0:{d - cf:.3f},setpts=PTS-STARTPTS[b];"
-          f"[tail]trim=start={d - cf:.3f},setpts=PTS-STARTPTS,format=yuva420p,"
+    # ĐỌC CLIP 2 LẦN (2 input) thay vì split: nhánh "đầu" và "đuôi" đọc ở vị trí lệch xa nhau
+    # -> nếu dùng split, ffmpeg phải BUFFER cả clip trong RAM -> "Cannot allocate memory" với
+    # clip dài / máy RAM thấp. 2 input decode ĐỘC LẬP -> không buffer -> nhẹ RAM, chạy máy yếu.
+    scale = (f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase,"
+             f"crop={WIDTH}:{HEIGHT},fps={FPS},setsar=1")
+    fc = (f"[0:v]{scale},trim=0:{d - cf:.3f},setpts=PTS-STARTPTS[b];"
+          f"[1:v]{scale},trim=start={d - cf:.3f},setpts=PTS-STARTPTS,format=yuva420p,"
           f"fade=t=out:st=0:d={cf:.3f}:alpha=1[t];"
           f"[b][t]overlay,format=yuv420p[out]")
-    cmd = ([ae.FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-i", clip,
+    cmd = ([ae.FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-i", clip, "-i", clip,
             "-filter_complex", fc, "-map", "[out]", "-t", f"{d - cf:.3f}", "-r", str(FPS)]
            + ae.enc_args() + ["-pix_fmt", "yuv420p", out])
     ae.run(cmd, timeout=600)
