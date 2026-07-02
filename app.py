@@ -170,14 +170,21 @@ def _is_frozen():
     return getattr(sys, "frozen", False) or ("__compiled__" in globals())
 
 
+def _self_exe():
+    """Đường dẫn .exe THẬT để tự gọi lại render. ⚠️ Nuitka onefile đặt sys.executable =
+    một python.exe ẢO trong thư mục temp (KHÔNG tồn tại) -> KHÔNG dùng được cho subprocess.
+    Đường dẫn .exe thật khách chạy nằm ở sys.argv[0] (hoặc env NUITKA_ONEFILE_BINARY)."""
+    return os.environ.get("NUITKA_ONEFILE_BINARY") or os.path.abspath(sys.argv[0])
+
+
 def script_cmd(script):
     """Lệnh gọi ENGINE phụ (auto_edit/sleep_video).
     - Dev (.py): [python, <đường dẫn script>].
-    - Bản .exe: KHÔNG còn python + .py riêng -> gọi LẠI chính .exe kèm cờ route
-      (--run-auto-edit / --run-sleep-video) để vào auto_edit.main()/sleep_video.main()."""
+    - Bản .exe: KHÔNG còn python + .py riêng -> gọi LẠI chính .exe (đường dẫn THẬT, không
+      phải sys.executable ảo) kèm cờ route -> vào auto_edit.main()/sleep_video.main()."""
     if _is_frozen():
         flag = "--run-sleep-video" if "sleep" in script else "--run-auto-edit"
-        return [PY, flag]
+        return [_self_exe(), flag]
     return [PY, dflt(script)]
 
 
