@@ -21,7 +21,6 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PY = sys.executable
-CONFIG_PATH = os.path.join(HERE, "config.local.json")
 
 DEFAULT_STYLE = (
     "Flat 2D educational illustration. White OR pure black background — never mixed. "
@@ -50,10 +49,26 @@ def default_config():
     }
 
 
+def _config_path():
+    """Đường dẫn config.local.json (API key + profiles + hàng đợi + lịch sử...).
+    ⚠️ Bản .exe (Nuitka onefile): __file__ nằm trong thư mục TEMP giải nén — thư mục này ĐỔI
+    tên mỗi lần chạy và bị XÓA khi thoát app. Lưu config ở đó = mất sạch khi mở lại (đây là
+    bug 'lưu style xong tắt/mở lại là mất'). Nên bản .exe lưu ở DATA_DIR (%APPDATA%\\AutoEditVideo),
+    CÙNG chỗ license.json — ổn định + luôn ghi được. Bản dev (.py) giữ nguyên cạnh app.py."""
+    if _is_frozen():
+        try:
+            import config
+            os.makedirs(config.DATA_DIR, exist_ok=True)
+            return os.path.join(config.DATA_DIR, "config.local.json")
+        except Exception:
+            pass
+    return os.path.join(HERE, "config.local.json")
+
+
 def load_config():
     cfg = default_config()
     try:
-        with open(CONFIG_PATH, encoding="utf-8-sig") as f:
+        with open(_config_path(), encoding="utf-8-sig") as f:
             data = json.load(f)
         cfg.update({k: data[k] for k in cfg if k in data})
         # Di trú ô tick cũ "tool_style" -> "style_mode"
@@ -79,7 +94,7 @@ def load_config():
 
 def save_config(cfg):
     try:
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        with open(_config_path(), "w", encoding="utf-8") as f:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
     except Exception as e:  # noqa
         print("Loi luu config:", e)
@@ -1809,6 +1824,22 @@ def main():
 
 
 if __name__ == "__main__":
+    # Chẩn đoán: in nơi ĐANG lưu config.local.json + nội dung đọc được (KHÔNG in API key).
+    if len(sys.argv) > 1 and sys.argv[1] == "--where-config":
+        try:                                  # tên profile có dấu -> tránh lỗi charmap cp1252
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:  # noqa
+            pass
+        p = _config_path()
+        print("config_path :", p)
+        print("exists      :", os.path.exists(p))
+        try:
+            c = load_config()
+            print("profiles    :", list(c.get("profiles", {}).keys()))
+            print("active      :", c.get("active_profile"))
+        except Exception as e:  # noqa
+            print("load_err    :", e)
+        sys.exit(0)
     # Bản .exe tự gọi lại CHÍNH NÓ để chạy engine (vì không còn python + .py riêng).
     # Xem script_cmd(): khi frozen, render/sleep gọi [exe, --run-auto-edit/--run-sleep-video, ...].
     if len(sys.argv) > 1 and sys.argv[1] in ("--run-auto-edit", "--run-sleep-video"):
