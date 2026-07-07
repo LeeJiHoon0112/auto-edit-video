@@ -1296,8 +1296,8 @@ class App:
                         style_mode=smode, provider=prov, character=character, title=title)
                     self.q.put(("line", "• (2/2) Viết prompt CHUYỂN ĐỘNG...\n"))
                     motion = ai_prompts.generate_motion_prompts(
-                        texts, key, model=model, progress=prog, provider=prov,
-                        character=character, title=title)
+                        texts, key, image_prompts=img_prompts, model=model, progress=prog,
+                        provider=prov, character=character, title=title)
                     ip = os.path.join(base_dir, "image_prompts.txt")
                     mp = os.path.join(base_dir, "motion_prompts.txt")
                     with open(ip, "w", encoding="utf-8") as f:

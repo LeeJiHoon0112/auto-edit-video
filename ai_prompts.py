@@ -657,29 +657,48 @@ def generate_prompts(scenes_text, style, api_key, model=None,
 # IMAGE-TO-VIDEO: prompt CHUYỂN ĐỘNG (áp lên ảnh keyframe đã tạo sẵn).
 # Ảnh đã chứa nhân vật + bối cảnh + màu + style -> motion CHỈ tả camera + hành động.
 # ─────────────────────────────────────────────────────────────────────────────
-SYSTEM_MOTION = """You write IMAGE-TO-VIDEO motion prompts. Each scene ALREADY has a finished keyframe image (the character, setting, colours and art style are fixed in that image). For EACH scene you receive its NARRATION; write ONE English line (about 10-20 words) describing how to ANIMATE that image: a CAMERA move PLUS a concrete VISIBLE motion in the shot.
+SYSTEM_MOTION = """You write IMAGE-TO-VIDEO motion prompts. For EACH scene you are given its NARRATION and a description of its KEYFRAME IMAGE that has ALREADY been drawn (the character, setting, objects, colours and art style are fixed in that image). Write ONE English line (about 10-20 words) describing how to ANIMATE THAT EXACT KEYFRAME: a CAMERA move PLUS a concrete VISIBLE motion.
 
-VARIETY IS REQUIRED so the video does not feel boring or repetitive:
+CRITICAL — STAY INSIDE THE KEYFRAME (this is the most important rule):
+- Only animate things that ACTUALLY EXIST in the KEYFRAME IMAGE. Read the keyframe description and animate what is literally in it.
+- If the keyframe is a wall map, a chessboard, a portrait, a diagram or icons, animate THAT (camera pushing over the map, icons pulsing/blinking, a hand moving a piece, light sweeping across it) — do NOT invent real soldiers, crowds, smoke, launchers, vehicles or rooms that are NOT in the image.
+- Use the NARRATION ONLY to set the ENERGY / mood / timing — NEVER to add objects, people or events that the keyframe does not contain.
+
+VARIETY IS REQUIRED so the video does not feel repetitive:
 - VARY the camera move across scenes — rotate through: slow push-in, pull-out / push-out, pan left, pan right, tilt up, tilt down, slow orbit / parallax, gentle handheld sway, rack focus, static hold. Do NOT use "push-in" in more than about one scene in four, and never repeat the same move many times in a row.
-- MATCH the energy to the narration: tense / conflict / danger beats -> faster, sharper moves (quick push-in, slight handheld, snap, whip); calm / resolution beats -> slow, settling moves.
-- Give a CONCRETE VISIBLE motion, not just an inner state: a gesture, a head/eye turn, a hand movement, a step, OR environmental motion (background people shifting, light flicker, drifting particles, steam, papers, fabric, rain). AVOID vague phrases like "realization settles" and avoid over-using "subtle / slight / quiet".
+- MATCH the energy to the narration: tense / conflict / danger beats -> faster, sharper moves; calm / resolution beats -> slow, settling moves.
+- Give a CONCRETE VISIBLE motion that is present in the image: a gesture, a head/eye turn, a hand movement, drifting particles, light flicker, steam, papers, fabric. AVOID vague phrases like "realization settles" and avoid over-using "subtle / slight / quiet".
 
-You MUST NOT describe appearance, the character's looks, clothes, art style, colours, lighting or the background contents — they are already in the image. {char}
+You MUST NOT describe appearance, clothes, art style, colours, lighting or the background contents — they are already in the image. {char}
 Return ONLY a JSON array of strings, exactly one per scene, in the SAME ORDER. No commentary, no extra keys."""
 
 
-def generate_motion_prompts(scenes_text, api_key, model=None, batch=None,
+def generate_motion_prompts(scenes_text, api_key, image_prompts=None, model=None, batch=None,
                             progress=None, provider="gemini", character="", title=""):
-    """Sinh prompt CHUYỂN ĐỘNG cho image-to-video (1 dòng/cảnh, chỉ camera + hành động)."""
+    """Sinh prompt CHUYỂN ĐỘNG cho image-to-video (1 dòng/cảnh, camera + hành động).
+    image_prompts: mô tả ẢNH keyframe đã sinh (mỗi cảnh 1) — GHÉP vào input để motion KHỚP
+    đúng nội dung ảnh (không bịa vật thể/người không có trong ảnh, vd ảnh là bản đồ/bàn cờ mà
+    motion lại tả lính/khói). None -> chỉ dùng narration (giữ tương thích cũ)."""
     if not api_key or not api_key.strip():
         raise RuntimeError("Chưa nhập API key (vào tab Cài đặt).")
     if batch is None:
         batch = DEFAULT_BATCH.get(provider, 12)
     api_key = api_key.strip()
+    if image_prompts:                         # ghép mỗi cảnh = NARRATION + mô tả KEYFRAME
+        feed = []
+        for i, narr in enumerate(scenes_text):
+            img = ((image_prompts[i] if i < len(image_prompts) else "") or "").strip()
+            if img:
+                feed.append(f"NARRATION: {narr}\n   KEYFRAME IMAGE (already drawn — animate THIS "
+                            f"exact image, do not add anything not shown): {img}")
+            else:
+                feed.append(f"NARRATION: {narr}")
+    else:
+        feed = scenes_text
     char = (f'If the main character "{character.strip()}" appears, you may use the name in '
             f"the action.") if (character and character.strip()) else ""
     system = _title_context(title) + SYSTEM_MOTION.format(char=char)
-    out = _run_batches(system, scenes_text, api_key, model, batch, progress, provider)
+    out = _run_batches(system, feed, api_key, model, batch, progress, provider)
     return [(p or "").strip() for p in out]
 
 
