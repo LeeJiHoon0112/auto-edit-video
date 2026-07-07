@@ -222,7 +222,13 @@ class App:
         self.root = root
         self.cfg = load_config()
         self.q = queue.Queue()
-        root.title("PeiPei Auto Edit Video 🎬")
+        try:
+            import config
+            self.app_ver = str(getattr(config, "APP_VERSION", "")).strip()
+        except Exception:
+            self.app_ver = ""
+        _vtag = f" {self.app_ver}" if self.app_ver else ""
+        root.title(f"PeiPei Auto Edit Video{_vtag} 🎬")
         root.geometry("880x720")
         root.minsize(780, 640)
 
@@ -271,6 +277,9 @@ class App:
         ttk.Label(header, textvariable=self.lic_status, anchor="w").pack(side="left")
         tk.Label(header, text="Hỗ trợ Zalo : 0827298265", fg="#1aa64b",
                  font=("", 9, "bold")).pack(side="right")
+        if self.app_ver:                       # số phiên bản cho user dễ nhận biết
+            tk.Label(header, text=f"Phiên bản {self.app_ver}", fg="#888",
+                     font=("", 9)).pack(side="right", padx=(0, 12))
 
         # Khung trên: SIDEBAR trái + nội dung phải
         top = ttk.Frame(root)
