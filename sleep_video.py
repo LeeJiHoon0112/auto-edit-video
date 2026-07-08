@@ -95,7 +95,12 @@ def _overlay(effect, intensity):
 def _seamless_video_loop(clip, tmp):
     """Clip video nền -> bản LOOP LIỀN MẠCH: crossfade đuôi clip hòa vào đầu (frame cuối ≈
     frame đầu) -> lặp copy KHÔNG thấy điểm nối. Giữ NGUYÊN cảnh, không thêm gì."""
-    d = ae.probe_duration(clip) or 10.0
+    d_full = ae.probe_duration(clip) or 10.0
+    # CHỈ lấy tối đa LOOP_SEC giây ĐẦU clip để loop — KHÔNG re-encode cả clip. Clip nền dài
+    # (vài phút) trên máy KHÔNG GPU (libx264): dựng cả clip -> vượt timeout 600s -> TREO
+    # ("Tạo video ngủ thất bại mã 1"). Cắt còn ~LOOP_SEC: encode vài giây là xong, vẫn LOOP
+    # LIỀN MẠCH + giữ nguyên cảnh (20s đầu clip là dư để mắt không thấy điểm lặp).
+    d = min(d_full, float(LOOP_SEC))
     cf = min(1.2, max(0.4, d / 6.0))           # thời lượng crossfade (giây)
     out = os.path.join(tmp, "loopclip.mp4")
     # ĐỌC CLIP 2 LẦN (2 input) thay vì split: nhánh "đầu" và "đuôi" đọc ở vị trí lệch xa nhau
@@ -104,7 +109,7 @@ def _seamless_video_loop(clip, tmp):
     scale = (f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase,"
              f"crop={WIDTH}:{HEIGHT},fps={FPS},setsar=1")
     fc = (f"[0:v]{scale},trim=0:{d - cf:.3f},setpts=PTS-STARTPTS[b];"
-          f"[1:v]{scale},trim=start={d - cf:.3f},setpts=PTS-STARTPTS,format=yuva420p,"
+          f"[1:v]{scale},trim=start={d - cf:.3f}:end={d:.3f},setpts=PTS-STARTPTS,format=yuva420p,"
           f"fade=t=out:st=0:d={cf:.3f}:alpha=1[t];"
           f"[b][t]overlay,format=yuv420p[out]")
     cmd = ([ae.FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-i", clip, "-i", clip,
