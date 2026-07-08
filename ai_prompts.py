@@ -703,6 +703,63 @@ def generate_motion_prompts(scenes_text, api_key, image_prompts=None, model=None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# ẢNH ĐẦU→CUỐI (chuỗi GỐI ĐẦU) — cho Veo "Frames to Video".
+# N cảnh -> N+1 prompt ẢNH liên hoàn (mốc mở đầu mỗi cảnh + 1 ảnh KẾT) + N prompt CHUYỂN ĐỘNG.
+# Ảnh cuối clip i = ảnh đầu clip i+1 (gối đầu) -> video chảy liền mạch, cùng nhân vật xuyên suốt.
+# ─────────────────────────────────────────────────────────────────────────────
+SYSTEM_CHAIN_MOTION = """You write motion prompts for a FIRST-FRAME / LAST-FRAME video generator (e.g. Veo "Frames to Video"). For EACH clip you get the scene NARRATION plus a START FRAME description and an END FRAME description — both keyframes are ALREADY drawn, showing the SAME characters and setting at two moments. Write ONE English line (about 12-22 words) describing the MOTION that carries the shot from the START frame to the END frame: a CAMERA move PLUS the concrete action that transforms the start pose/state into the end pose/state.
+
+RULES:
+- Describe ONLY the transition BETWEEN the two given frames. Do NOT invent objects, characters or places that are not in either frame.
+- Do NOT re-describe appearance, clothes, art style, colours or lighting — they are fixed in the frames.
+- Keep the motion continuous and physically plausible so the interpolation is smooth (no teleport, no sudden new elements popping in).
+- MATCH the energy to the narration (calm beats -> slow settling moves; tense / danger beats -> faster, sharper moves). {char}
+Return ONLY a JSON array of strings, exactly one per clip, in the SAME ORDER. No commentary, no extra keys."""
+
+
+def generate_chain_prompts(scenes_text, style, api_key, model=None, batch=None,
+                           progress=None, style_mode=None, provider="gemini",
+                           character="", title=""):
+    """Chế độ ẢNH ĐẦU→CUỐI (chuỗi gối đầu) cho Veo Frames-to-Video.
+    N cảnh -> N+1 prompt ẢNH liên hoàn (mỗi ảnh = mốc mở đầu 1 cảnh, + 1 ảnh KẾT) +
+    N prompt CHUYỂN ĐỘNG (clip i nối ảnh i -> ảnh i+1). Ngoại hình nhân vật do ref lo nên
+    prompt chỉ tả hành động/trạng thái/bối cảnh; cả chuỗi giữ cùng nhân vật + mạch truyện.
+    Trả (image_prompts[N+1], motion_prompts[N])."""
+    if not api_key or not api_key.strip():
+        raise RuntimeError("Chưa nhập API key (vào tab Cài đặt).")
+    n = len(scenes_text)
+    if n == 0:
+        return [], []
+    if batch is None:
+        batch = DEFAULT_BATCH.get(provider, 12)
+    api_key = api_key.strip()
+
+    # 1) Chuỗi N+1 prompt ẢNH: N mốc "mở đầu mỗi cảnh" + 1 mốc "kết". Nhúng ngữ cảnh LIÊN HOÀN
+    #    vào từng mục để AI giữ cùng nhân vật/bối cảnh (tái dùng generate_prompts để lo style).
+    feed_img = [f"[Keyframe in ONE continuous story — SAME characters and setting throughout. "
+                f"OPENING moment of scene {i + 1} of {n}] {narr}"
+                for i, narr in enumerate(scenes_text)]
+    feed_img.append(f"[Keyframe in ONE continuous story — SAME characters and setting. FINAL "
+                    f"closing moment, right after scene {n}] {scenes_text[-1]}")
+    img_prompts = generate_prompts(feed_img, style, api_key, model=model, batch=batch,
+                                   progress=progress, mode="image", style_mode=style_mode,
+                                   provider=provider, character=character, title=title)
+
+    # 2) N prompt CHUYỂN ĐỘNG: mỗi clip nhìn CẢ ảnh đầu (START) + ảnh cuối (END).
+    char = (f'If the main character "{character.strip()}" appears, you may use the name in '
+            f"the action.") if (character and character.strip()) else ""
+    feed_motion = []
+    for i in range(n):
+        a = (img_prompts[i] if i < len(img_prompts) else "").strip()
+        b = (img_prompts[i + 1] if i + 1 < len(img_prompts) else "").strip()
+        feed_motion.append(f"NARRATION: {scenes_text[i]}\n   START FRAME: {a}\n   END FRAME: {b}")
+    system = _title_context(title) + SYSTEM_CHAIN_MOTION.format(char=char)
+    motion = _run_batches(system, feed_motion, api_key, model, batch, progress, provider)
+    motion = [(p or "").strip() for p in motion]
+    return img_prompts, motion
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # QC KHỚP NGHĨA: đối chiếu lời thoại từng cảnh ↔ mô tả cảnh -> tìm cảnh lệch nghĩa
 # ─────────────────────────────────────────────────────────────────────────────
 SYSTEM_QC = ("You are a video QC assistant. For each scene you get the NARRATION (what the "

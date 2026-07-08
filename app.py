@@ -535,6 +535,10 @@ class App:
             fp, variable=self.produce, value="i2v", command=self._save_produce,
             text="⭐  Clip từ ảnh — 2 prompt: ẢNH + CHUYỂN ĐỘNG  (có nhân vật chính, đồng nhất cao)"
         ).pack(anchor="w", padx=8, pady=1)
+        ttk.Radiobutton(
+            fp, variable=self.produce, value="chain", command=self._save_produce,
+            text="🎞️  Ảnh đầu→cuối (chuỗi gối đầu) — N+1 ẢNH + N CHUYỂN ĐỘNG  (Veo Frames-to-Video, video liền mạch)"
+        ).pack(anchor="w", padx=8, pady=1)
 
         fstyle = ttk.LabelFrame(f2, text="Áp STYLE ở đâu? (chỉ 1 nơi — tránh chọi style)")
         fstyle.pack(fill="x", padx=10, pady=(0, 6))
@@ -1318,6 +1322,28 @@ class App:
                     self.q.put(("line", f"\n• Đã ghi:\n   {ip}\n   {mp}\n   {sc}\n"))
                     self.q.put(("done", f"✅ Xong (Image-to-video)! {len(img_prompts)} cảnh × 2 prompt. "
                                         "Dùng image_prompts.txt tạo keyframe → motion_prompts.txt cho i2v."))
+                elif produce == "chain":
+                    self.q.put(("line", f"• {len(scenes)} cảnh → chuỗi {len(scenes) + 1} ẢNH gối đầu "
+                                        f"(ảnh đầu→cuối cho Veo Frames-to-Video) gọi {prov}...\n"))
+                    self.q.put(("line", "• (1/2) Viết chuỗi prompt ẢNH liên hoàn...\n"))
+                    img_prompts, motion = ai_prompts.generate_chain_prompts(
+                        texts, style, key, model=model, progress=prog,
+                        style_mode=smode, provider=prov, character=character, title=title)
+                    self.q.put(("line", "• (2/2) Viết prompt CHUYỂN ĐỘNG từng clip...\n"))
+                    ip = os.path.join(base_dir, "image_prompts.txt")
+                    mp = os.path.join(base_dir, "motion_prompts.txt")
+                    with open(ip, "w", encoding="utf-8") as f:
+                        f.write("\n".join(p.replace("\n", " ").strip() for p in img_prompts) + "\n")
+                    with open(mp, "w", encoding="utf-8") as f:
+                        f.write("\n".join(p.replace("\n", " ").strip() for p in motion) + "\n")
+                    pair = [f"ảnh {i + 1} → ảnh {i + 2}" for i in range(len(scenes))]
+                    sc = write_scenes(pair, motion)
+                    self.q.put(("scenes_done", sc))
+                    self.q.put(("line", f"\n• Đã ghi:\n   {ip}  ({len(img_prompts)} ảnh gối đầu)\n"
+                                        f"   {mp}  ({len(motion)} clip)\n   {sc}\n"))
+                    self.q.put(("done", f"✅ Xong (Ảnh đầu→cuối)! {len(img_prompts)} ảnh × {len(motion)} clip. "
+                                        "Tạo ảnh 1..N+1 (dùng ref giữ nhân vật) → mỗi clip Veo dùng ảnh i + ảnh "
+                                        "i+1 + dòng tương ứng trong motion_prompts.txt."))
                 else:
                     mode = "image" if produce == "image" else "video"
                     loai = "ẢNH tĩnh" if mode == "image" else "VIDEO"
