@@ -389,6 +389,45 @@ class App:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _check_update_now(self):
+        """User CHỦ ĐỘNG bấm kiểm tra bản mới (tab Cài đặt) — chạy NỀN để không đơ UI.
+        Có bản mới -> dùng chung popup _show_update (bản .exe tự tải + thay + restart). Không có
+        -> báo đang dùng bản mới nhất. Lỗi mạng -> báo kiểm tra kết nối."""
+        self.status.set("Đang kiểm tra cập nhật...")
+
+        def worker():
+            import config
+            cur = str(getattr(config, "APP_VERSION", "")).strip()
+            info, err = None, None
+            try:
+                import license_client as lic
+                import requests
+                r = requests.get(config.LICENSE_SERVER_URL.rstrip("/") + "/version", timeout=10)
+                r.raise_for_status()
+                d = r.json()
+                latest = (d.get("latest_version") or "").strip()
+                if latest and lic._ver_tuple(latest) > lic._ver_tuple(cur):
+                    info = {"latest": latest, "url": (d.get("download_url") or "").strip(),
+                            "message": (d.get("message") or "").strip()}
+            except Exception as e:  # noqa
+                err = str(e)
+
+            def show():
+                if info:
+                    self._show_update(info)
+                elif err:
+                    messagebox.showwarning(
+                        "Kiểm tra cập nhật",
+                        "Chưa kiểm tra được bản mới — hãy kiểm tra kết nối mạng.\n\n" + err)
+                else:
+                    messagebox.showinfo(
+                        "Kiểm tra cập nhật",
+                        f"Bạn đang dùng phiên bản mới nhất ({cur}).")
+                self.status.set("Sẵn sàng.")
+            self.root.after(0, show)
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def _show_update(self, info):
         """Thông báo có bản mới. Bản .exe (frozen) -> hỏi CẬP NHẬT NGAY (tự tải + tự thay +
         khởi động lại). Dev / không có link -> chỉ mở trang tải."""
@@ -792,6 +831,14 @@ class App:
 
     # ============================ TAB CÀI ĐẶT ============================
     def _build_settings(self, parent):
+        # --- Phần mềm: phiên bản + nút KIỂM TRA CẬP NHẬT (user chủ động, khỏi đợi mở lại app) ---
+        fu = ttk.LabelFrame(parent, text="Phần mềm")
+        fu.pack(fill="x", padx=8, pady=6)
+        ru = ttk.Frame(fu)
+        ru.pack(fill="x", padx=8, pady=6)
+        ttk.Label(ru, text=f"Phiên bản hiện tại: {self.app_ver or '?'}").pack(side="left")
+        ttk.Button(ru, text="🔄 Kiểm tra cập nhật",
+                   command=self._check_update_now).pack(side="right")
         # --- Nhà cung cấp AI + API key (mỗi nhà cung cấp 1 key riêng) ---
         fa = ttk.LabelFrame(parent, text="API viết prompt — chọn nhà cung cấp")
         fa.pack(fill="x", padx=8, pady=6)
