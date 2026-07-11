@@ -579,21 +579,25 @@ class App:
             text="🎞️  Ảnh đầu→cuối (chuỗi gối đầu) — N+1 ẢNH + N CHUYỂN ĐỘNG  (Veo Frames-to-Video, video liền mạch)"
         ).pack(anchor="w", padx=8, pady=1)
 
-        fstyle = ttk.LabelFrame(f2, text="Áp STYLE ở đâu? (chỉ 1 nơi — tránh chọi style)")
+        fstyle = ttk.LabelFrame(
+            f2, text="Phong cách (Style) để AI hay ẢNH MẪU lo? — chọn đúng 1, chọn cả 2 nơi sẽ chọi nhau")
         fstyle.pack(fill="x", padx=10, pady=(0, 6))
         self.style_mode = tk.StringVar(value=self.cfg.get("style_mode", "in_prompt"))
         ttk.Radiobutton(
             fstyle, variable=self.style_mode, value="in_prompt", command=self._save_stylemode,
-            text="①  Trong prompt — kèm style  (TẮT Style Lock ở tool video)"
+            text="①  AI viết STYLE ngay trong prompt — chọn khi bạn KHÔNG dùng ảnh mẫu ở tool tạo video"
         ).pack(anchor="w", padx=8, pady=1)
         ttk.Radiobutton(
             fstyle, variable=self.style_mode, value="lock_art", command=self._save_stylemode,
-            text="⭐  Lock lo NÉT + AI lo MÀU/ERA  (BẬT Style Lock chỉ nét) — khuyên dùng"
+            text="⭐  Ảnh mẫu lo NÉT VẼ — AI lo màu sắc + bối cảnh — chọn khi CÓ dùng ảnh mẫu (khuyên dùng)"
         ).pack(anchor="w", padx=8, pady=1)
         ttk.Radiobutton(
             fstyle, variable=self.style_mode, value="lock_all", command=self._save_stylemode,
-            text="②  Lock lo TẤT CẢ style — AI chỉ viết nội dung  (BẬT Style Lock đầy đủ)"
+            text="②  Ảnh mẫu lo TOÀN BỘ phong cách — AI chỉ viết nội dung cảnh (không tả màu, không tả style)"
         ).pack(anchor="w", padx=8, pady=1)
+        ttk.Label(fstyle, foreground="#888",
+                  text="Ảnh mẫu = ảnh khóa phong cách (Style Lock / ảnh tham chiếu) bạn đưa vào tool tạo video như Veo/Flow."
+                  ).pack(anchor="w", padx=8, pady=(0, 4))
 
         bar = ttk.Frame(parent)
         bar.pack(fill="x", padx=8, pady=8)
