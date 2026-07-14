@@ -19,6 +19,9 @@ import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
+import i18n
+from i18n import tr
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 PY = sys.executable
 
@@ -124,7 +127,7 @@ def license_gate(root):
 def _activate_dialog(root, lic, st):
     """Hộp thoại kích hoạt. Trả True nếu activate thành công + license VALID/GRACE."""
     win = tk.Toplevel(root)
-    win.title("Kích hoạt bản quyền — PeiPei Auto Edit Video")
+    win.title(tr("Kích hoạt bản quyền — PeiPei Auto Edit Video"))
     win.resizable(False, False)
     win.grab_set()
     result = {"ok": False}
@@ -132,12 +135,12 @@ def _activate_dialog(root, lic, st):
 
     frm = ttk.Frame(win, padding=16)
     frm.pack(fill="both", expand=True)
-    ttk.Label(frm, text="Phần mềm cần kích hoạt bản quyền để sử dụng.",
+    ttk.Label(frm, text=tr("Phần mềm cần kích hoạt bản quyền để sử dụng."),
               font=("Segoe UI", 10, "bold")).pack(anchor="w")
     if st.get("message"):
         ttk.Label(frm, text=st["message"], foreground="#a00").pack(anchor="w", pady=(2, 8))
 
-    ttk.Label(frm, text="Mã máy (gửi mã này cho người bán để lấy key):").pack(anchor="w")
+    ttk.Label(frm, text=tr("Mã máy (gửi mã này cho người bán để lấy key):")).pack(anchor="w")
     midrow = ttk.Frame(frm)
     midrow.pack(fill="x", pady=(2, 10))
     ttk.Entry(midrow, textvariable=tk.StringVar(value=mid), width=34,
@@ -146,7 +149,7 @@ def _activate_dialog(root, lic, st):
                command=lambda: (win.clipboard_clear(), win.clipboard_append(mid))).pack(
                    side="left", padx=6)
 
-    ttk.Label(frm, text="Dán license key:").pack(anchor="w")
+    ttk.Label(frm, text=tr("Dán license key:")).pack(anchor="w")
     kvar = tk.StringVar()
     ttk.Entry(frm, textvariable=kvar, width=46).pack(fill="x", pady=(2, 6))
     status = ttk.Label(frm, text="", foreground="#a00")
@@ -155,21 +158,21 @@ def _activate_dialog(root, lic, st):
     def _do_activate():
         key = kvar.get().strip()
         if not key:
-            status.config(text="Hãy dán license key.", foreground="#a00")
+            status.config(text=tr("Hãy dán license key."), foreground="#a00")
             return
-        status.config(text="Đang kích hoạt...", foreground="#333")
+        status.config(text=tr("Đang kích hoạt..."), foreground="#333")
         win.update()
         ok, msg = lic.activate(key)
         if ok and lic.check().get("status") in ("VALID", "GRACE"):
             result["ok"] = True
             win.destroy()
         else:
-            status.config(text=msg or "Kích hoạt thất bại.", foreground="#a00")
+            status.config(text=msg or tr("Kích hoạt thất bại."), foreground="#a00")
 
     btns = ttk.Frame(frm)
     btns.pack(fill="x", pady=(10, 0))
-    ttk.Button(btns, text="Kích hoạt", command=_do_activate).pack(side="left")
-    ttk.Button(btns, text="Thoát", command=win.destroy).pack(side="right")
+    ttk.Button(btns, text=tr("Kích hoạt"), command=_do_activate).pack(side="left")
+    ttk.Button(btns, text=tr("Thoát"), command=win.destroy).pack(side="right")
 
     win.protocol("WM_DELETE_WINDOW", win.destroy)
     win.wait_window()
@@ -221,6 +224,9 @@ class App:
     def __init__(self, root):
         self.root = root
         self.cfg = load_config()
+        # Ngôn ngữ: theo config; LẦN ĐẦU (chưa lưu) -> theo locale Windows (máy nước
+        # ngoài mặc định English để khách Tây đọc được ngay)
+        i18n.set_lang(self.cfg.get("lang") or i18n.detect_default())
         self.q = queue.Queue()
         try:
             import config
@@ -330,6 +336,7 @@ class App:
 
         self._refresh_license_label()
         self._show_page("prompt")
+        i18n.translate_tree(root)         # áp ngôn ngữ đã chọn lên toàn bộ giao diện
         self.root.after(100, self._drain)
         self._check_update_async()          # tự hỏi server có bản mới không (nền)
 
@@ -366,7 +373,7 @@ class App:
             import config
             if getattr(config, "LICENSE_ENABLED", False):
                 import license_client as lic
-                self.lic_status.set(lic.status_text())
+                self.lic_status.set(tr(lic.status_text()))
             else:
                 self.lic_status.set("")
         except Exception:
@@ -392,6 +399,17 @@ class App:
                 self.root.after(0, lambda: self._show_update(info))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _on_lang_pick(self, _e=None):
+        """Đổi ngôn ngữ Việt/Anh: dịch SỐNG toàn bộ giao diện + lưu nhớ."""
+        code = "en" if self.lang_var.get() == "English" else "vi"
+        i18n.set_lang(code)
+        os.environ["AEV_LANG"] = code       # engine subprocess (render/sleep) dịch log theo
+        self.cfg["lang"] = code
+        save_config(self.cfg)
+        i18n.translate_tree(self.root)
+        self.q_count.set(tr(f"{len(self.cfg.get('queue', []))} video trong hàng đợi"))
+        self.status.set(tr("Sẵn sàng."))
 
     def _check_update_now(self):
         """User CHỦ ĐỘNG bấm kiểm tra bản mới (tab Cài đặt) — chạy NỀN để không đơ UI.
@@ -421,13 +439,13 @@ class App:
                     self._show_update(info)
                 elif err:
                     messagebox.showwarning(
-                        "Kiểm tra cập nhật",
-                        "Chưa kiểm tra được bản mới — hãy kiểm tra kết nối mạng.\n\n" + err)
+                        tr("Kiểm tra cập nhật"),
+                        tr("Chưa kiểm tra được bản mới — hãy kiểm tra kết nối mạng.") + "\n\n" + err)
                 else:
                     messagebox.showinfo(
-                        "Kiểm tra cập nhật",
-                        f"Bạn đang dùng phiên bản mới nhất ({cur}).")
-                self.status.set("Sẵn sàng.")
+                        tr("Kiểm tra cập nhật"),
+                        tr(f"Bạn đang dùng phiên bản mới nhất ({cur})."))
+                self.status.set(tr("Sẵn sàng."))
             self.root.after(0, show)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -438,16 +456,16 @@ class App:
         latest = info.get("latest", "?")
         url = (info.get("url") or "").strip()
         note = (info.get("message") or "").strip()
-        text = f"Đã có phiên bản mới: {latest}."
+        text = tr(f"Đã có phiên bản mới: {latest}.")
         if note:
             text += f"\n{note}"
         if url and _is_frozen():
-            text += "\n\nCẬP NHẬT NGAY? (app tự tải + tự cài + khởi động lại — bạn không cần làm gì)"
-            if messagebox.askyesno("🔔 Có bản cập nhật mới", text):
+            text += "\n\n" + tr("CẬP NHẬT NGAY? (app tự tải + tự cài + khởi động lại — bạn không cần làm gì)")
+            if messagebox.askyesno(tr("🔔 Có bản cập nhật mới"), text):
                 self._do_self_update(url)
         elif url:
-            text += "\n\nMở trang tải bản mới ngay?"
-            if messagebox.askyesno("🔔 Có bản cập nhật mới", text):
+            text += "\n\n" + tr("Mở trang tải bản mới ngay?")
+            if messagebox.askyesno(tr("🔔 Có bản cập nhật mới"), text):
                 try:
                     import webbrowser
                     webbrowser.open(url)
@@ -895,6 +913,14 @@ class App:
         ttk.Label(ru, text=f"Phiên bản hiện tại: {self.app_ver or '?'}").pack(side="left")
         ttk.Button(ru, text="🔄 Kiểm tra cập nhật",
                    command=self._check_update_now).pack(side="right")
+        # Ngôn ngữ / Language — đổi SỐNG toàn bộ giao diện, lưu nhớ
+        self.lang_var = tk.StringVar(
+            value="English" if i18n.get_lang() == "en" else "Tiếng Việt")
+        cbl = ttk.Combobox(ru, width=10, state="readonly", textvariable=self.lang_var,
+                           values=["Tiếng Việt", "English"])
+        cbl.pack(side="right", padx=(0, 12))
+        cbl.bind("<<ComboboxSelected>>", self._on_lang_pick)
+        ttk.Label(ru, text="🌐 Ngôn ngữ / Language:").pack(side="right", padx=(0, 4))
         # --- Nhà cung cấp AI + API key (mỗi nhà cung cấp 1 key riêng) ---
         fa = ttk.LabelFrame(parent, text="API viết prompt — chọn nhà cung cấp")
         fa.pack(fill="x", padx=8, pady=6)
@@ -970,7 +996,7 @@ class App:
         import ai_prompts
         style = self.txt_style.get("1.0", "end").strip()
         if not style:
-            messagebox.showinfo("Xem trước style", "Profile đang trống.")
+            messagebox.showinfo(tr("Xem trước style"), tr("Profile đang trống."))
             return
         cap = ai_prompts._style_caption(style)
         if not cap.strip():
@@ -1113,7 +1139,7 @@ class App:
     def _profile_save(self):
         sel = self.lb.curselection()
         if not sel:
-            messagebox.showinfo("Chọn profile", "Hãy chọn 1 profile bên trái (hoặc bấm Thêm).")
+            messagebox.showinfo(tr("Chọn profile"), tr("Hãy chọn 1 profile bên trái (hoặc bấm Thêm)."))
             return
         name = self.lb.get(sel[0])
         self.cfg["profiles"][name] = self.txt_style.get("1.0", "end").strip()
@@ -1127,7 +1153,7 @@ class App:
             return
         name = self.lb.get(sel[0])
         if len(self.cfg["profiles"]) <= 1:
-            messagebox.showinfo("Không thể xoá", "Phải giữ ít nhất 1 profile.")
+            messagebox.showinfo(tr("Không thể xoá"), tr("Phải giữ ít nhất 1 profile."))
             return
         if messagebox.askyesno("Xoá", f"Xoá style profile '{name}'?"):
             self.cfg["profiles"].pop(name, None)
@@ -1148,7 +1174,7 @@ class App:
         hints = {"gemini": "Key tại aistudio.google.com",
                  "openai": "Key tại platform.openai.com/api-keys",
                  "claude": "Key tại console.anthropic.com → Get API key"}
-        self.key_hint.set(hints.get(self.provider_var.get(), ""))
+        self.key_hint.set(tr(hints.get(self.provider_var.get(), "")))
 
     def _on_provider_pick(self, _e=None):
         self.cfg["provider"] = self.provider_var.get()
@@ -1313,7 +1339,7 @@ class App:
     def run_make_prompts(self):
         srt = self.srt.get()
         if not os.path.isfile(srt):
-            messagebox.showwarning("Thiếu", "Chưa chọn file SRT hợp lệ.")
+            messagebox.showwarning(tr("Thiếu"), tr("Chưa chọn file SRT hợp lệ."))
             return
         name = self.profile_var.get()
         style = self.cfg["profiles"].get(name, "")
@@ -1327,13 +1353,13 @@ class App:
         self.cfg["main_character"] = character
         save_config(self.cfg)
         if not key.strip():
-            messagebox.showwarning("Thiếu API key",
-                                   f"Vào tab Cài đặt nhập API key cho '{prov}' trước nhé.")
+            messagebox.showwarning(tr("Thiếu API key"),
+                                   tr(f"Vào tab Cài đặt nhập API key cho '{prov}' trước nhé."))
             return
         if smode != "lock_all" and not style.strip():
-            messagebox.showwarning("Thiếu style",
-                                   "Style profile đang trống. Vào tab Cài đặt để dán nội dung, "
-                                   "hoặc chọn chế độ '② Lock lo TẤT CẢ style'.")
+            messagebox.showwarning(tr("Thiếu style"),
+                                   tr("Style profile đang trống. Vào tab Cài đặt để dán nội dung, "
+                                      "hoặc chọn chế độ '② Lock lo TẤT CẢ style'."))
             return
         try:
             target = float(self.secs.get())
@@ -1506,7 +1532,7 @@ class App:
             messagebox.showwarning("Thiếu", "Chưa chọn file SRT.")
             return
         if not os.path.isdir(self.images.get()):
-            messagebox.showwarning("Thiếu", "Chưa chọn thư mục ảnh/clip.")
+            messagebox.showwarning(tr("Thiếu"), tr("Chưa chọn thư mục ảnh/clip."))
             return
         if not self._confirm_broken(self.images.get()):
             return
@@ -1552,7 +1578,7 @@ class App:
             messagebox.showwarning("Thiếu", "Chưa chọn file SRT.")
             return
         if not os.path.isdir(self.images.get()):
-            messagebox.showwarning("Thiếu", "Chưa chọn thư mục ảnh/clip.")
+            messagebox.showwarning(tr("Thiếu"), tr("Chưa chọn thư mục ảnh/clip."))
             return
         prev = os.path.join(tempfile.gettempdir(), "aev_preview.mp4")
         job = dict(self._current_job(), out=prev)
@@ -1595,7 +1621,7 @@ class App:
         prov = self.cfg.get("provider", "gemini")
         key = self.cfg.get("keys", {}).get(prov, "")
         if not key.strip():
-            messagebox.showwarning("Thiếu API key", f"Vào Cài đặt nhập key cho '{prov}'.")
+            messagebox.showwarning(tr("Thiếu API key"), tr(f"Vào Cài đặt nhập key cho '{prov}'."))
             return
         model = self.cfg.get("models", {}).get(prov)
         import csv
@@ -1751,10 +1777,10 @@ class App:
 
     def add_to_queue(self):
         if not os.path.isfile(self.srt.get()):
-            messagebox.showwarning("Thiếu", "Chưa chọn file SRT hợp lệ.")
+            messagebox.showwarning(tr("Thiếu"), tr("Chưa chọn file SRT hợp lệ."))
             return
         if not os.path.isdir(self.images.get()):
-            messagebox.showwarning("Thiếu", "Chưa chọn thư mục ảnh/clip.")
+            messagebox.showwarning(tr("Thiếu"), tr("Chưa chọn thư mục ảnh/clip."))
             return
         job = self._current_job()
         # CẢNH BÁO nếu bảng cảnh không khớp voice (dễ là dùng nhầm scenes video khác)
@@ -1886,7 +1912,7 @@ class App:
             imgs = os.path.basename((j.get("images", "?") or "").rstrip("/\\"))
             self.qlist.insert("end", f"{i}.  {out}   ←  {srt}   |  clip: {imgs}")
         n = len(self.cfg.get("queue", []))
-        self.q_count.set(f"{n} video trong hàng đợi")
+        self.q_count.set(tr(f"{n} video trong hàng đợi"))
 
     def _queue_del(self):
         sel = self.qlist.curselection()
@@ -1905,7 +1931,7 @@ class App:
     def run_render_queue(self):
         jobs = list(self.cfg.get("queue", []))
         if not jobs:
-            messagebox.showinfo("Hàng đợi trống", "Chưa có video nào trong hàng đợi.")
+            messagebox.showinfo(tr("Hàng đợi trống"), tr("Chưa có video nào trong hàng đợi."))
             return
         # Kiểm clip hỏng cho toàn hàng đợi (#7)
         allbad = [(os.path.basename(j.get("out", "?")), self._broken_clips(j.get("images", "")))
@@ -1977,6 +2003,9 @@ def _cleanup_old_exe():
 def main():
     selftest = "--selftest" in sys.argv
     _cleanup_old_exe()
+    # Nạp ngôn ngữ TRƯỚC license gate (hộp kích hoạt là thứ đầu tiên khách thấy)
+    i18n.set_lang(load_config().get("lang") or i18n.detect_default())
+    os.environ["AEV_LANG"] = i18n.get_lang()   # engine subprocess đọc để dịch log
     root = tk.Tk()
     if not selftest:
         try:

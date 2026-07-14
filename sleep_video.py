@@ -26,6 +26,15 @@ for _s in (sys.stdout, sys.stderr):
 
 WIDTH, HEIGHT = 1920, 1080
 FPS = 30
+# Song ngữ log theo AEV_LANG (như auto_edit.py); thiếu i18n.py -> giữ tiếng Việt
+try:
+    import i18n as _i18n
+    from i18n import tr
+    _i18n.set_lang(os.environ.get("AEV_LANG", "vi"))
+except Exception:                                     # noqa
+    def tr(s):
+        return s
+
 LOOP_SEC = 20.0          # độ dài đoạn nền loop (đủ dài để mắt không thấy lặp)
 TEX_H = 2160             # cao texture; vstack đôi -> scroll dọc LIỀN MẠCH (không giật khi loop)
 
@@ -181,15 +190,15 @@ def make_sleep_video(bg, audio, out, effect="rain", intensity="vua", fade=4.0,
     if adur < 1:
         raise SystemExit("Audio quá ngắn / không đọc được độ dài.")
 
-    kind = "video loop" if bg.lower().endswith(ae.VIDEO_EXTS) else "ảnh tĩnh"
-    print(f"• Nền: {os.path.basename(bg)} ({kind}) | Hiệu ứng: {effect}/{intensity} | "
-          f"Encoder: {enc}")
-    print(f"• Audio: {os.path.basename(audio)} | Video dài: {adur:.0f}s "
-          f"({adur / 3600:.2f}h) | loop nền {LOOP_SEC:.0f}s")
+    kind = tr("video loop") if bg.lower().endswith(ae.VIDEO_EXTS) else tr("ảnh tĩnh")
+    print(tr(f"• Nền: {os.path.basename(bg)} ({kind}) | Hiệu ứng: {effect}/{intensity} | "
+             f"Encoder: {enc}"))
+    print(tr(f"• Audio: {os.path.basename(audio)} | Video dài: {adur:.0f}s "
+             f"({adur / 3600:.2f}h) | loop nền {LOOP_SEC:.0f}s"))
 
     tmp = tempfile.mkdtemp(prefix="sleep_")
     try:
-        print("• (1/2) Dựng đoạn nền loop + hiệu ứng...")
+        print(tr("• (1/2) Dựng đoạn nền loop + hiệu ứng..."))
         loop = _build_loopclip(bg, effect, intensity, tmp)
 
         os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
@@ -201,7 +210,7 @@ def make_sleep_video(bg, audio, out, effect="rain", intensity="vua", fade=4.0,
         has_amb = bool(ambient and os.path.isfile(ambient))
         amb_in = (["-stream_loop", "-1", "-i", os.path.abspath(ambient)] if has_amb else [])
         if has_amb:
-            print(f"• Âm thanh nền: {os.path.basename(ambient)} (âm lượng {ambient_volume})")
+            print(tr(f"• Âm thanh nền: {os.path.basename(ambient)} (âm lượng {ambient_volume})"))
 
         def _mix_to_a(voice_lbl):
             """voice_lbl (nhãn nhánh tiếng chính) [+ ambient] -> afade -> [a]."""
@@ -213,7 +222,7 @@ def make_sleep_video(bg, audio, out, effect="rain", intensity="vua", fade=4.0,
         vfilt, yoff = _viz_filter(viz)
         if vfilt:
             # CÓ visualizer -> render FULL theo audio (không loop-copy được) -> chậm hơn
-            print("• (2/2) Render FULL + visualizer theo audio (lâu hơn vì vẽ theo nhạc)...")
+            print(tr("• (2/2) Render FULL + visualizer theo audio (lâu hơn vì vẽ theo nhạc)..."))
             fc = (f"[1:a]asplit=2[av][ao];{vfilt};"
                   f"[0:v][viz]overlay=0:{yoff}:format=auto,format=yuv420p[v];"
                   f"{_mix_to_a('ao')}")
@@ -225,7 +234,7 @@ def make_sleep_video(bg, audio, out, effect="rain", intensity="vua", fade=4.0,
                     "-t", f"{adur:.3f}", "-movflags", "+faststart", os.path.abspath(out)])
         elif has_amb:
             # KHÔNG visualizer nhưng CÓ ambient -> video COPY, nhưng phải trộn tiếng (filter)
-            print("• (2/2) Lặp nền COPY + TRỘN âm thanh nền vào tiếng + fade...")
+            print(tr("• (2/2) Lặp nền COPY + TRỘN âm thanh nền vào tiếng + fade..."))
             cmd = ([ae.FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
                     "-stream_loop", "-1", "-i", loop, "-i", os.path.abspath(audio)]
                    + amb_in
@@ -234,14 +243,14 @@ def make_sleep_video(bg, audio, out, effect="rain", intensity="vua", fade=4.0,
                       "-movflags", "+faststart", os.path.abspath(out)])
         else:
             # Không viz, không ambient -> lặp nền COPY cho hết audio (RẤT NHANH)
-            print("• (2/2) Lặp nền cho hết audio + ghép tiếng + fade (video COPY -> nhanh)...")
+            print(tr("• (2/2) Lặp nền cho hết audio + ghép tiếng + fade (video COPY -> nhanh)..."))
             cmd = [ae.FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
                    "-stream_loop", "-1", "-i", loop, "-i", os.path.abspath(audio),
                    "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-af", afade,
                    "-c:a", "aac", "-b:a", "192k", "-t", f"{adur:.3f}",
                    "-movflags", "+faststart", os.path.abspath(out)]
         ae.run(cmd, timeout=None)
-        print(f"\n✅ XONG: {os.path.abspath(out)}")
+        print("\n" + tr(f"✅ XONG: {os.path.abspath(out)}"))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

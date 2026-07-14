@@ -63,6 +63,16 @@ TRANSITIONS = ["none", "fade", "fadeblack", "fadewhite", "dissolve",
 # Phụ đề: tạo file ASS có PlayResX/Y = đúng kích thước video -> mọi giá trị tính bằng
 # PIXEL THẬT (không bị libass scale theo thang 288 gây phụ đề trôi lên giữa màn hình).
 # Kiểu "quân sự/tài liệu": IN HOA, chữ trắng to đậm khối, viền đen DÀY + bóng.
+# Song ngữ log: dịch theo AEV_LANG (app đặt khi user chọn English). Chạy độc lập
+# không có i18n.py -> giữ nguyên tiếng Việt.
+try:
+    import i18n as _i18n
+    from i18n import tr
+    _i18n.set_lang(os.environ.get("AEV_LANG", "vi"))
+except Exception:                                     # noqa
+    def tr(s):
+        return s
+
 SUB_FONT = "Arial Black"   # font đậm khối; nếu máy không có sẽ tự về Arial
 SUB_SIZE = 52              # cỡ chữ (pixel thật trên video 1080p)
 SUB_OUTLINE = 4            # độ dày viền đen (px)
@@ -214,7 +224,7 @@ def run(cmd, cwd=None, timeout=None):
                              stderr=subprocess.PIPE, text=True, encoding="utf-8",
                              errors="replace", creationflags=flags, timeout=timeout)
     except subprocess.TimeoutExpired:
-        raise SystemExit(f"QUÁ {timeout}s chưa xong (treo?) — {' '.join(str(c) for c in cmd[:3])} ...")
+        raise SystemExit(tr(f"QUÁ {timeout}s chưa xong (treo?) — {' '.join(str(c) for c in cmd[:3])} ..."))
     if res.returncode != 0:
         sys.stderr.write("\n[FFmpeg lỗi]\n" + (res.stderr or "")[-1500:] + "\n")
         raise SystemExit(f"Lệnh thất bại: {' '.join(str(c) for c in cmd[:3])} ...")
@@ -416,10 +426,10 @@ def _maybe_shrink_image(media, tmp_dir):
         run([FFMPEG, "-y", "-i", media, "-vf",
              f"scale='if(gt(iw,ih),{SRC_MAX},-1)':'if(gt(iw,ih),-1,{SRC_MAX})':flags=lanczos",
              small], timeout=180)
-        print(f"     (ảnh lớn {w}x{h} -> thu nhỏ {SRC_MAX}px cho nhanh & khỏi treo)")
+        print(tr(f"     (ảnh lớn {w}x{h} -> thu nhỏ {SRC_MAX}px cho nhanh & khỏi treo)"))
         return small if os.path.isfile(small) else media
     except SystemExit:
-        print(f"     (CẢNH BÁO: ảnh {w}x{h} quá lớn, không thu nhỏ được — thử render thẳng)")
+        print(tr(f"     (CẢNH BÁO: ảnh {w}x{h} quá lớn, không thu nhỏ được — thử render thẳng)"))
         return media
 
 
@@ -713,7 +723,7 @@ def main():
     else:
         fps_use, fps_why = 30, "toàn ảnh tĩnh -> Ken Burns mượt"
     globals()["FPS"] = max(1, fps_use)
-    print(f"• FPS: {FPS} ({fps_why})")
+    print(f"• FPS: {FPS} ({tr(fps_why)})")
 
     # ---- Encoder (ưu tiên GPU) + số luồng render song song ----
     enc = detect_encoder(args.encoder)[0]
@@ -722,19 +732,19 @@ def main():
     if enc != "libx264":
         auto_jobs = min(auto_jobs, 3)          # encoder GPU: cap session đồng thời cho an toàn
     jobs = args.jobs if (args.jobs and args.jobs > 0) else auto_jobs
-    print(f"• Encoder: {enc} | Render song song: {jobs} cảnh/lúc")
+    print(tr(f"• Encoder: {enc} | Render song song: {jobs} cảnh/lúc"))
 
-    voice_name = os.path.basename(voice) if voice else "KHÔNG"
-    dur_txt = f"{audio_dur:.1f}s" if audio_dur else "theo SRT"
-    print(f"• Phụ đề: {n_seg} đoạn (tự khớp voiceover theo timestamp) | "
-          f"Ảnh: {n_img} | Voice: {voice_name} ({dur_txt})")
-    print(f"• Rải ảnh: {mode_label} → {len(scenes)} cảnh | tổng video {total_end:.1f}s")
+    voice_name = os.path.basename(voice) if voice else tr("KHÔNG")
+    dur_txt = f"{audio_dur:.1f}s" if audio_dur else tr("theo SRT")
+    print(tr(f"• Phụ đề: {n_seg} đoạn (tự khớp voiceover theo timestamp) | "
+             f"Ảnh: {n_img} | Voice: {voice_name} ({dur_txt})"))
+    print(tr(f"• Rải ảnh: {tr(mode_label)} → {len(scenes)} cảnh | tổng video {total_end:.1f}s"))
 
     if args.dry_run:
         for i, (src, d) in enumerate(scenes):
-            print(f"   cảnh {i+1:>3}: {os.path.basename(src):<22} {d:6.2f}s")
-        print(f"   → TỔNG {sum(d for _, d in scenes):.1f}s "
-              f"(khớp voice/SRT {total_end:.1f}s)")
+            print(tr(f"   cảnh {i+1:>3}: {os.path.basename(src):<22} {d:6.2f}s"))
+        print(tr(f"   → TỔNG {sum(d for _, d in scenes):.1f}s "
+                 f"(khớp voice/SRT {total_end:.1f}s)"))
         return
 
     tmp = tempfile.mkdtemp(prefix="autoedit_")
@@ -786,7 +796,7 @@ def main():
             run([FFMPEG, "-y", "-f", "concat", "-safe", "0", "-i", listfile,
                  "-c", "copy", silent])
         else:
-            print("• Áp crossfade cho các ảnh tĩnh...")
+            print(tr("• Áp crossfade cho các ảnh tĩnh..."))
             segments, i, n = [], 0, len(clips)
             while i < n:
                 if is_img[i]:
@@ -864,7 +874,7 @@ def main():
             cmd += (["-filter_complex", ";".join(fc), "-map", vmap, "-map", "[aout]"]
                     + enc_args() + ["-pix_fmt", "yuv420p",
                     "-c:a", "aac", "-b:a", "192k", "-t", f"{vid_dur:.3f}", out_abs])
-            print("• Đang render bản cuối (màu + phụ đề + voice + nhạc nền)...")
+            print(tr("• Đang render bản cuối (màu + phụ đề + voice + nhạc nền)..."))
         else:
             # Không nhạc nền -> dùng -vf cho video như cũ
             if vchain:
@@ -876,17 +886,17 @@ def main():
             else:
                 cmd += ["-map", "0:v:0"]
             cmd += [out_abs]
-            print("• Đang render bản cuối (phụ đề + voice)...")
+            print(tr("• Đang render bản cuối (phụ đề + voice)..."))
 
         run(cmd, cwd=cwd)
 
-        print(f"\n✅ XONG: {out_abs}")
+        print("\n" + tr(f"✅ XONG: {out_abs}"))
         if audio_dur and segs[-1]['end'] < audio_dur - 0.5:
-            print(f"  (Voice dài {audio_dur:.1f}s > SRT {segs[-1]['end']:.1f}s — "
-                  "ảnh cuối đã được kéo dài để phủ hết tiếng.)")
+            print(tr(f"  (Voice dài {audio_dur:.1f}s > SRT {segs[-1]['end']:.1f}s — "
+                     "ảnh cuối đã được kéo dài để phủ hết tiếng.)"))
     finally:
         if args.keep_temp:
-            print(f"• Temp giữ lại tại: {tmp}")
+            print(tr(f"• Temp giữ lại tại: {tmp}"))
         else:
             shutil.rmtree(tmp, ignore_errors=True)
 
