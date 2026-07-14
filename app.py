@@ -242,6 +242,10 @@ class App:
         self.kenburns = tk.BooleanVar(value=True)
         self.subs = tk.BooleanVar(value=True)
         self.kara_color = tk.StringVar(value=self.cfg.get("kara_color", "#FFFF00"))
+        # Phụ đề: phông chữ + cách hiển thị + màu viền (mặc định = như cũ)
+        self.sub_font = tk.StringVar(value=self.cfg.get("sub_font", "Arial Black"))
+        self.sub_mode = tk.StringVar(value=self.cfg.get("sub_mode", "word"))
+        self.sub_outline = tk.StringVar(value=self.cfg.get("sub_outline", "#000000"))
         self.crossfade = tk.BooleanVar(value=False)
         self.transition = tk.StringVar(value="fade")   # kiểu chuyển cảnh khi bật Crossfade (#2)
         self.color = tk.StringVar(value="none")        # màu phim (#3)
@@ -642,15 +646,63 @@ class App:
                              "slideup", "wipeleft", "wiperight", "circleopen", "radial",
                              "zoomin", "pixelize"]).pack(side="left")
 
-        # Phụ đề 1 TỪ: mỗi lúc chỉ hiện đúng 1 từ theo nhịp voice — chọn màu chữ
+        # ---- PHỤ ĐỀ: phông chữ + màu chữ/viền + cách hiển thị + preset màu ----
         linek = ttk.Frame(f2)
-        linek.pack(fill="x", padx=10, pady=(0, 8))
-        ttk.Label(linek, text="🖍 Phụ đề 1 TỪ theo voice — màu chữ:").pack(side="left")
+        linek.pack(fill="x", padx=10, pady=(0, 2))
+        ttk.Label(linek, text="🖍 Phụ đề — Phông chữ:").pack(side="left")
+        try:                                   # chỉ liệt kê font CÓ THẬT trên máy
+            import tkinter.font as tkfont
+            avail = set(tkfont.families())
+        except Exception:
+            avail = set()
+        curated = ["Arial Black", "Arial", "Impact", "Segoe UI Black", "Segoe UI",
+                   "Tahoma", "Verdana", "Bahnschrift", "Calibri", "Cambria", "Georgia",
+                   "Times New Roman", "Comic Sans MS", "Consolas", "Montserrat", "Roboto"]
+        fonts = [f for f in curated if not avail or f in avail] or curated
+        cbf = ttk.Combobox(linek, width=18, textvariable=self.sub_font, values=fonts)
+        cbf.pack(side="left", padx=6)
+        cbf.bind("<<ComboboxSelected>>", lambda e: self._save_subopts())
+        cbf.bind("<FocusOut>", lambda e: self._save_subopts())
+        ttk.Label(linek, text="Màu chữ:").pack(side="left", padx=(10, 0))
         self.kara_swatch = tk.Label(linek, width=3, relief="ridge",
                                     bg=self._safe_bg(self.kara_color.get()))
-        self.kara_swatch.pack(side="left", padx=6)
-        ttk.Button(linek, text="Đổi màu", width=8,
+        self.kara_swatch.pack(side="left", padx=4)
+        ttk.Button(linek, text="Đổi", width=5,
                    command=self._pick_kara_color).pack(side="left")
+        ttk.Label(linek, text="Màu viền:").pack(side="left", padx=(10, 0))
+        self.outline_swatch = tk.Label(linek, width=3, relief="ridge",
+                                       bg=self._safe_bg(self.sub_outline.get()))
+        self.outline_swatch.pack(side="left", padx=4)
+        ttk.Button(linek, text="Đổi", width=5,
+                   command=self._pick_sub_outline).pack(side="left")
+
+        linem = ttk.Frame(f2)
+        linem.pack(fill="x", padx=10, pady=(0, 2))
+        ttk.Label(linem, text="Cách hiện sub:").pack(side="left")
+        for val, lbl in (("word", "1 TỪ nhảy theo voice (mặc định)"),
+                         ("line", "Cả câu"),
+                         ("kara", "Cả câu + tô màu từ đang đọc")):
+            ttk.Radiobutton(linem, text=lbl, value=val, variable=self.sub_mode,
+                            command=self._save_subopts).pack(side="left", padx=(8, 0))
+
+        # Preset màu phụ đề (bấm chọn mẫu — đặt màu chữ + màu viền)
+        SUB_PRESETS = [
+            ("Neon", "#00FFF7", "#006E7A"), ("Classic", "#FFFFFF", "#000000"),
+            ("Minimal", "#FFFFFF", "#2B2B2B"), ("Bold", "#FFE600", "#000000"),
+            ("Mint", "#7CFFC4", "#0B5C3D"), ("Rose", "#FF7CA8", "#651232"),
+            ("Sky", "#7CD9FF", "#0C4A6E"), ("Sunset", "#FFB25C", "#7A3A00"),
+            ("Lavender", "#C9A8FF", "#3B2A66"), ("Lemon", "#FFF75C", "#6B6000"),
+            ("Coral", "#FF8C7C", "#7A1F10"), ("Teal", "#5CE8E0", "#0B5C58"),
+        ]
+        linep = ttk.Frame(f2)
+        linep.pack(fill="x", padx=10, pady=(2, 8))
+        ttk.Label(linep, text="Preset màu (bấm chọn):").pack(side="left")
+        for name, fg, oc in SUB_PRESETS:
+            tk.Button(linep, text=name, fg=fg, bg="#181818",
+                      activeforeground=fg, activebackground="#2A2A2A",
+                      relief="groove", bd=1, padx=6, font=("", 8, "bold"),
+                      command=lambda f=fg, o=oc, n=name: self._apply_sub_preset(n, f, o)
+                      ).pack(side="left", padx=2)
 
         # Màu phim + vignette + hạt phim (#3)
         line2 = ttk.Frame(f2)
@@ -1605,6 +1657,33 @@ class App:
             self.cfg["kara_color"] = hx
             save_config(self.cfg)
 
+    def _pick_sub_outline(self):
+        """Mở bảng chọn màu -> đặt màu VIỀN chữ phụ đề, lưu nhớ."""
+        from tkinter import colorchooser
+        _, hx = colorchooser.askcolor(color=self._safe_bg(self.sub_outline.get()),
+                                      title="Màu viền chữ phụ đề")
+        if hx:
+            self.sub_outline.set(hx)
+            self.outline_swatch.config(bg=self._safe_bg(hx))
+            self._save_subopts()
+
+    def _apply_sub_preset(self, name, fg, outline):
+        """Bấm preset -> đặt màu chữ + màu viền phụ đề theo mẫu, lưu nhớ."""
+        self.kara_color.set(fg)
+        self.sub_outline.set(outline)
+        self.kara_swatch.config(bg=self._safe_bg(fg))
+        self.outline_swatch.config(bg=self._safe_bg(outline))
+        self._save_subopts()
+        self.status.set(f"Đã áp preset phụ đề '{name}' (chữ {fg}, viền {outline}).")
+
+    def _save_subopts(self):
+        """Lưu tùy chọn phụ đề (font + cách hiện + màu) vào config."""
+        self.cfg["sub_font"] = self.sub_font.get().strip()
+        self.cfg["sub_mode"] = self.sub_mode.get()
+        self.cfg["sub_outline"] = self.sub_outline.get().strip()
+        self.cfg["kara_color"] = self.kara_color.get().strip()
+        save_config(self.cfg)
+
     # ============================ HÀNG ĐỢI ============================
     def _current_job(self):
         """Gói nguyên liệu đang chọn ở tab Làm video thành 1 'job' để render."""
@@ -1618,6 +1697,8 @@ class App:
             "grain": self.grain.get(), "bgm": self.bgm.get(),
             "bgm_volume": self.bgm_volume.get(), "duck": self.duck.get(),
             "kara_color": self.kara_color.get(),
+            "sub_font": self.sub_font.get(), "sub_mode": self.sub_mode.get(),
+            "sub_outline": self.sub_outline.get(),
         }
 
     def _job_cmd(self, job, preview=False):
@@ -1638,6 +1719,15 @@ class App:
             kc = (job.get("kara_color") or "").strip()
             if kc:
                 cmd += ["--karaoke-color", kc]
+            sf = (job.get("sub_font") or "").strip()
+            if sf and sf != "Arial Black":              # khác mặc định mới cần truyền
+                cmd += ["--sub-font", sf]
+            sm = (job.get("sub_mode") or "word").strip()
+            if sm in ("line", "kara"):
+                cmd += ["--sub-mode", sm]
+            so = (job.get("sub_outline") or "").strip()
+            if so and so.lower() not in ("#000000", "black"):
+                cmd += ["--sub-outline-color", so]
         if job.get("crossfade", False):
             cmd += ["--transition", job.get("transition") or "fade"]
         if job.get("color") and job["color"] != "none":

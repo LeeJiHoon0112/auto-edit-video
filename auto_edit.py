@@ -106,16 +106,24 @@ def _split_word_times(seg):
     return out
 
 
-def _write_ass(srt_path, ass_path, width, height, karaoke_color=SUB_KARAOKE_COLOR):
-    """SRT -> ASS kiểu 1 TỪ: mỗi thời điểm chỉ hiện ĐÚNG 1 từ theo nhịp voice (audio nói
-    từ nào -> hiện từ đó, KHÔNG hiện cả câu). Mỗi từ = 1 Dialogue [word_start, word_end];
-    thời lượng chia theo số ký tự trong câu. Màu chữ = karaoke_color. Canh GIỮA-DƯỚI, IN
-    HOA (nếu bật), viền đen dày + bóng. PlayResX/Y = pixel thật."""
+def _write_ass(srt_path, ass_path, width, height, karaoke_color=SUB_KARAOKE_COLOR,
+               font=None, mode="word", outline_color=None):
+    """SRT -> ASS phụ đề. 3 CÁCH HIỂN THỊ (mode):
+      - "word" (mặc định, như cũ): mỗi thời điểm chỉ hiện ĐÚNG 1 TỪ theo nhịp voice
+        (mỗi từ 1 Dialogue, thời lượng chia theo số ký tự trong câu).
+      - "line": hiện CẢ CÂU theo mốc SRT (kiểu phụ đề thường).
+      - "kara": hiện CẢ CÂU, TÔ MÀU dần từng từ theo nhịp voice (karaoke \\k; từ chưa đọc
+        màu trắng, đọc tới đâu chuyển sang karaoke_color tới đó).
+    font = phông chữ (None = SUB_FONT; máy không có font -> libass tự về Arial).
+    outline_color = màu VIỀN chữ hex (None = đen) — cho preset kiểu Neon/Mint...
+    Màu chữ = karaoke_color. Canh GIỮA-DƯỚI, IN HOA (nếu bật), viền dày + bóng.
+    PlayResX/Y = pixel thật."""
     segs = parse_srt(srt_path)
     bold = -1
-    prim = _hex_to_ass(karaoke_color)                # màu chữ của từ
-    style = (f"Style: Default,{SUB_FONT},{SUB_SIZE},"
-             f"{prim},&H00FFFFFF,&H00000000,&H80000000,"
+    prim = _hex_to_ass(karaoke_color)                # màu chữ (word/line) / màu tô tới (kara)
+    outl = _hex_to_ass(outline_color, "&H00000000") if outline_color else "&H00000000"
+    style = (f"Style: Default,{font or SUB_FONT},{SUB_SIZE},"
+             f"{prim},&H00FFFFFF,{outl},&H80000000,"
              f"{bold},0,0,0,100,100,0,0,1,{SUB_OUTLINE},{SUB_SHADOW},"
              f"2,60,60,{SUB_MARGIN_V},1")
     head = (
@@ -132,9 +140,23 @@ def _write_ass(srt_path, ass_path, width, height, karaoke_color=SUB_KARAOKE_COLO
     )
     lines = [head]
     for s in segs:
-        for w, ws, we in _split_word_times(s):
-            lines.append(f"Dialogue: 0,{_ass_time(ws)},{_ass_time(we)},"
-                         f"Default,,0,0,0,,{w}\n")
+        if mode == "line":                      # CẢ CÂU theo mốc SRT
+            txt = " ".join(s["text"].split())
+            if SUB_UPPERCASE:
+                txt = txt.upper()
+            lines.append(f"Dialogue: 0,{_ass_time(s['start'])},{_ass_time(s['end'])},"
+                         f"Default,,0,0,0,,{txt}\n")
+        elif mode == "kara":                    # CẢ CÂU + tô màu dần từng từ (\k centisec)
+            parts = []
+            for w, ws, we in _split_word_times(s):
+                cs = max(1, int(round((we - ws) * 100)))
+                parts.append(f"{{\\k{cs}}}{w}")
+            lines.append(f"Dialogue: 0,{_ass_time(s['start'])},{_ass_time(s['end'])},"
+                         f"Default,,0,0,0,,{' '.join(parts)}\n")
+        else:                                   # "word" (mặc định): 1 TỪ theo nhịp voice
+            for w, ws, we in _split_word_times(s):
+                lines.append(f"Dialogue: 0,{_ass_time(ws)},{_ass_time(we)},"
+                             f"Default,,0,0,0,,{w}\n")
     with open(ass_path, "w", encoding="utf-8") as f:
         f.write("".join(lines))
 
@@ -585,6 +607,14 @@ def main():
     ap.add_argument("--no-subtitles", action="store_true")
     ap.add_argument("--karaoke-color", default=SUB_KARAOKE_COLOR,
                     help="Màu chữ chạy karaoke khi voice đọc tới (hex #RRGGBB), vd #FFFF00 vàng")
+    ap.add_argument("--sub-font", default=None,
+                    help=f"Phông chữ phụ đề (phải có trên máy; không có sẽ tự về Arial). "
+                         f"Mặc định: {SUB_FONT}")
+    ap.add_argument("--sub-mode", choices=["word", "line", "kara"], default="word",
+                    help="Cách hiện phụ đề: word=1 TỪ theo voice (mặc định) | line=cả câu | "
+                         "kara=cả câu + tô màu dần từng từ theo voice")
+    ap.add_argument("--sub-outline-color", default=None,
+                    help="Màu VIỀN chữ phụ đề (hex #RRGGBB, mặc định đen) — cho preset Neon...")
     # --- Màu phim (#3) ---
     ap.add_argument("--color", choices=["none", "cinematic", "cold", "warm", "bw"],
                     default="none",
@@ -795,7 +825,9 @@ def main():
         if not args.no_subtitles:
             # ASS (tên ascii, trong temp) PlayResX/Y = kích thước video -> phụ đề đúng pixel thật.
             subs = os.path.join(tmp, "subs.ass")
-            _write_ass(args.srt, subs, WIDTH, HEIGHT, args.karaoke_color)
+            _write_ass(args.srt, subs, WIDTH, HEIGHT, args.karaoke_color,
+                       font=args.sub_font, mode=args.sub_mode,
+                       outline_color=args.sub_outline_color)
             cwd = tmp                       # chạy ffmpeg trong temp -> path phụ đề tương đối
             vchain.append("subtitles=subs.ass")
 
