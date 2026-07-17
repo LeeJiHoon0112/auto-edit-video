@@ -63,6 +63,12 @@ TRANSITIONS = ["none", "fade", "fadeblack", "fadewhite", "dissolve",
 # Phụ đề: tạo file ASS có PlayResX/Y = đúng kích thước video -> mọi giá trị tính bằng
 # PIXEL THẬT (không bị libass scale theo thang 288 gây phụ đề trôi lên giữa màn hình).
 # Kiểu "quân sự/tài liệu": IN HOA, chữ trắng to đậm khối, viền đen DÀY + bóng.
+# Log đẩy NGAY từng dòng (subprocess bị block-buffer -> khung Nhật ký trống tưởng treo)
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+except Exception:                                     # noqa
+    pass
+
 # Song ngữ log: dịch theo AEV_LANG (app đặt khi user chọn English). Chạy độc lập
 # không có i18n.py -> giữ nguyên tiếng Việt.
 try:
