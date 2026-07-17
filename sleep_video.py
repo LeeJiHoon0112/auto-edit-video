@@ -26,6 +26,13 @@ for _s in (sys.stdout, sys.stderr):
 
 WIDTH, HEIGHT = 1920, 1080
 FPS = 30
+# Log đẩy NGAY từng dòng lên khung Nhật ký (chạy dưới subprocess bị block-buffer ->
+# user nhìn log trống tưởng treo dù đang chạy)
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+except Exception:                                     # noqa
+    pass
+
 # Song ngữ log theo AEV_LANG (như auto_edit.py); thiếu i18n.py -> giữ tiếng Việt
 try:
     import i18n as _i18n
@@ -160,7 +167,7 @@ def _norm_segment(src, idx, tmp, item_sec, effect, intensity):
     return out
 
 
-def _folder_loop(folder, effect, intensity, tmp, item_sec):
+def _folder_loop(folder, effect, intensity, tmp, item_sec, max_total=240.0):
     """FOLDER nhiều ảnh/clip -> 1 đoạn nền XOAY VÒNG liền mạch: chuẩn hóa từng mục (theo
     tên file) -> nối crossfade -> hòa đuôi về mục đầu (seamless) -> loop-copy như thường."""
     files = sorted(f for f in os.listdir(folder)
@@ -168,11 +175,16 @@ def _folder_loop(folder, effect, intensity, tmp, item_sec):
     paths = [os.path.join(folder, f) for f in files]
     if not paths:
         raise SystemExit(tr(f"Thư mục nền không có ảnh/clip nào: {folder}"))
+    item_sec = max(4.0, min(float(item_sec), 3600.0))
     if len(paths) == 1:
-        return _build_loopclip(paths[0], effect, intensity, tmp, item_sec)
+        return _build_loopclip(paths[0], effect, intensity, tmp, min(item_sec, 120.0))
+    if item_sec > 120.0:
+        # MỤC DÀI (vd 30 phút/ảnh): KHÔNG encode cả 30 phút — mỗi mục encode 1 đoạn 20s
+        # (hiệu ứng lặp khít 20s) + 1 mối nối crossfade, rồi LẶP BẰNG COPY qua concat list.
+        return _folder_long_rotation(paths, effect, intensity, tmp, item_sec)
     # Giới hạn TỔNG thời lượng đoạn loop (máy KHÔNG GPU encode chuỗi quá dài sẽ treo
     # timeout — bài học gotcha #10). Thừa mục -> chỉ dùng các mục đầu.
-    MAX_TOTAL = 240.0
+    MAX_TOTAL = float(max_total)
     max_items = max(2, int(MAX_TOTAL // max(4.0, float(item_sec))))
     if len(paths) > max_items:
         print(tr(f"  (nhiều mục: dùng {max_items}/{len(paths)} mục đầu cho đoạn loop)"))
@@ -204,11 +216,49 @@ def _folder_loop(folder, effect, intensity, tmp, item_sec):
     return _seamless_video_loop(chain, tmp, cap=None)
 
 
-def _build_loopclip(bg, effect, intensity, tmp, item_sec=20.0):
+def _folder_long_rotation(paths, effect, intensity, tmp, item_sec):
+    """MỤC DÀI (item_sec > 120, vd 30 phút/ảnh) -> trả về CONCAT LIST (.txt) lặp bằng COPY:
+    mỗi mục encode 1 đoạn chuẩn LOOP_SEC (hiệu ứng lặp khít) + 1 MỐI NỐI crossfade sang mục
+    kế; mục hiển thị ~item_sec nhờ LẶP đoạn 20s (k-2 lần plain + phần trong 2 mối nối) —
+    encode tổng chỉ ~N×(20+39)s dù mỗi ảnh chiếu 30 phút. Chuỗi KHÉP VÒNG (mục cuối nối về
+    mục đầu) -> stream_loop cả list cho video dài vô hạn."""
+    MAX_ITEMS = 12
+    if len(paths) > MAX_ITEMS:
+        print(tr(f"  (nhiều mục: dùng {MAX_ITEMS}/{len(paths)} mục đầu cho vòng xoay)"))
+        paths = paths[:MAX_ITEMS]
+    n = len(paths)
+    unit = float(LOOP_SEC)
+    k = max(2, int(round(item_sec / unit)))          # số lần lặp đoạn 20s cho mỗi mục
+    print(tr(f"• Chế độ mục DÀI: {n} mục × ~{k * unit:g}s (lặp đoạn {unit:g}s bằng COPY, "
+             f"chỉ encode {n} đoạn + {n} mối nối)..."))
+    segs = []
+    for i, p in enumerate(paths):
+        segs.append(_norm_segment(p, i, tmp, unit, effect, intensity))
+    cf = 1.0
+    juncs = []
+    for i in range(n):                               # mối nối i -> i+1 (khép vòng về 0)
+        a, b = segs[i], segs[(i + 1) % n]
+        j = os.path.join(tmp, f"junc{i:02d}.mp4")
+        fc = (f"[0:v][1:v]xfade=transition=fade:duration={cf}:offset={unit - cf:.3f}[out]")
+        cmd = ([ae.FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-i", a, "-i", b,
+                "-filter_complex", fc, "-map", "[out]", "-r", str(FPS)]
+               + ae.enc_args() + ["-pix_fmt", "yuv420p", j])
+        ae.run(cmd, timeout=600)
+        juncs.append(j)
+    lst = os.path.join(tmp, "rotation.txt")
+    with open(lst, "w", encoding="utf-8") as f:      # [seg_i × (k-2)] + [mối nối i] ... khép vòng
+        for i in range(n):
+            for _ in range(max(0, k - 2)):
+                f.write("file '" + segs[i].replace("\\", "/") + "'\n")
+            f.write("file '" + juncs[i].replace("\\", "/") + "'\n")
+    return lst
+
+
+def _build_loopclip(bg, effect, intensity, tmp, item_sec=20.0, max_total=240.0):
     """Dựng đoạn nền NGẮN loop LIỀN MẠCH. FOLDER nhiều ảnh/clip -> xoay vòng; clip video ->
     crossfade seamless (giữ nguyên cảnh); ảnh tĩnh -> render LOOP_SEC + (hiệu ứng nếu chọn)."""
     if os.path.isdir(bg):
-        return _folder_loop(bg, effect, intensity, tmp, item_sec)
+        return _folder_loop(bg, effect, intensity, tmp, item_sec, max_total)
     if bg.lower().endswith(ae.VIDEO_EXTS):
         return _seamless_video_loop(bg, tmp)
     out = os.path.join(tmp, "loopclip.mp4")
@@ -284,7 +334,19 @@ def make_sleep_video(bg, audio, out, effect="rain", intensity="vua", fade=4.0,
     tmp = tempfile.mkdtemp(prefix="sleep_")
     try:
         print(tr("• (1/2) Dựng đoạn nền loop + hiệu ứng..."))
-        loop = _build_loopclip(bg, effect, intensity, tmp, item_sec)
+        if os.path.isdir(bg) and max_seconds and 0 < max_seconds <= 30:
+            # XEM TRƯỚC với nền FOLDER: dựng vòng xoay RÚT GỌN (mỗi mục ~6s, tối đa ~20s)
+            # cho ra kết quả trong <1 phút; render thật vẫn dựng vòng xoay đầy đủ.
+            print(tr("• Xem trước: rút gọn vòng xoay folder (mỗi mục ~6s) cho nhanh..."))
+            loop = _build_loopclip(bg, effect, intensity, tmp,
+                                   min(float(item_sec), 6.0), max_total=20.0)
+        else:
+            loop = _build_loopclip(bg, effect, intensity, tmp, item_sec)
+        # Nền có thể là 1 FILE loop hoặc CONCAT LIST (.txt — chế độ mục DÀI): input khác nhau
+        if loop.lower().endswith(".txt"):
+            vin = ["-stream_loop", "-1", "-f", "concat", "-safe", "0", "-i", loop]
+        else:
+            vin = ["-stream_loop", "-1", "-i", loop]
 
         os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
         fo = max(0.0, adur - fade)
@@ -311,8 +373,8 @@ def make_sleep_video(bg, audio, out, effect="rain", intensity="vua", fade=4.0,
             fc = (f"[1:a]asplit=2[av][ao];{vfilt};"
                   f"[0:v][viz]overlay=0:{yoff}:format=auto,format=yuv420p[v];"
                   f"{_mix_to_a('ao')}")
-            cmd = ([ae.FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
-                    "-stream_loop", "-1", "-i", loop, "-i", os.path.abspath(audio)]
+            cmd = ([ae.FFMPEG, "-y", "-hide_banner", "-loglevel", "error"]
+                   + vin + ["-i", os.path.abspath(audio)]
                    + amb_in
                    + ["-filter_complex", fc, "-map", "[v]", "-map", "[a]"]
                    + ae.enc_args() + ["-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
@@ -320,8 +382,8 @@ def make_sleep_video(bg, audio, out, effect="rain", intensity="vua", fade=4.0,
         elif has_amb:
             # KHÔNG visualizer nhưng CÓ ambient -> video COPY, nhưng phải trộn tiếng (filter)
             print(tr("• (2/2) Lặp nền COPY + TRỘN âm thanh nền vào tiếng + fade..."))
-            cmd = ([ae.FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
-                    "-stream_loop", "-1", "-i", loop, "-i", os.path.abspath(audio)]
+            cmd = ([ae.FFMPEG, "-y", "-hide_banner", "-loglevel", "error"]
+                   + vin + ["-i", os.path.abspath(audio)]
                    + amb_in
                    + ["-filter_complex", _mix_to_a("1:a"), "-map", "0:v:0", "-map", "[a]",
                       "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-t", f"{adur:.3f}",
@@ -329,11 +391,11 @@ def make_sleep_video(bg, audio, out, effect="rain", intensity="vua", fade=4.0,
         else:
             # Không viz, không ambient -> lặp nền COPY cho hết audio (RẤT NHANH)
             print(tr("• (2/2) Lặp nền cho hết audio + ghép tiếng + fade (video COPY -> nhanh)..."))
-            cmd = [ae.FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
-                   "-stream_loop", "-1", "-i", loop, "-i", os.path.abspath(audio),
+            cmd = ([ae.FFMPEG, "-y", "-hide_banner", "-loglevel", "error"]
+                   + vin + ["-i", os.path.abspath(audio),
                    "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-af", afade,
                    "-c:a", "aac", "-b:a", "192k", "-t", f"{adur:.3f}",
-                   "-movflags", "+faststart", os.path.abspath(out)]
+                   "-movflags", "+faststart", os.path.abspath(out)])
         ae.run(cmd, timeout=None)
         print("\n" + tr(f"✅ XONG: {os.path.abspath(out)}"))
     finally:

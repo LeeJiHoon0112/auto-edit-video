@@ -234,6 +234,10 @@ EN = {
         "• (2/2) Loop background over full audio + mux + fade (video COPY -> fast)...",
     "1 ảnh / 1 đoạn phụ đề": "1 image per subtitle segment",
     # ----- Video ngủ: FOLDER nhiều ảnh/clip -----
+    "• Xem trước: rút gọn vòng xoay folder (mỗi mục ~6s) cho nhanh...":
+        "• Preview: shortened folder rotation (~6s per item) for speed...",
+    "Giây mỗi mục chỉ nhận 4–3600s — đã tự chỉnh lại.":
+        "Seconds-per-item accepts 4–3600s — value adjusted.",
     "⏱ Giây mỗi mục (folder):": "⏱ Seconds per item (folder):",
     "Chưa chọn nền (1 file clip/ảnh, hoặc 1 folder nhiều ảnh/clip).":
         "No background selected (pick 1 clip/image file, or 1 folder of images/clips).",
@@ -294,6 +298,10 @@ RULES = [
     (re.compile(r"^Vào Cài đặt nhập key cho '(.+)'\.$"),
      "Enter a key for '{0}' in Settings."),
     # Video ngủ: FOLDER nhiều ảnh/clip
+    (re.compile(r"^• Chế độ mục DÀI: (\d+) mục × ~(.+)s \(lặp đoạn (.+)s bằng COPY, chỉ encode (\d+) đoạn \+ (\d+) mối nối\)\.\.\.$"),
+     "• LONG-item mode: {0} items × ~{1}s (looping a {2}s segment by COPY — only {3} segments + {4} junctions encoded)..."),
+    (re.compile(r"^  \(nhiều mục: dùng (\d+)/(\d+) mục đầu cho vòng xoay\)$"),
+     "  (many items: using the first {0}/{1} for the rotation)"),
     (re.compile(r"^thư mục (\d+) mục$"), "folder ({0} items)"),
     (re.compile(r"^• Ghép (\d+) mục nền \(xoay vòng \+ crossfade, mỗi mục ≤(.+)s\)\.\.\.$"),
      "• Chaining {0} background items (rotation + crossfade, ≤{1}s each)..."),

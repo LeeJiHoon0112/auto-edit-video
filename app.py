@@ -813,7 +813,7 @@ class App:
         ttk.Spinbox(line2, from_=0.0, to=1.0, increment=0.05, width=5,
                     textvariable=self.sleep_ambient_vol).pack(side="left", padx=(4, 0))
         ttk.Label(line2, text="⏱ Giây mỗi mục (folder):").pack(side="left", padx=(16, 2))
-        ttk.Spinbox(line2, from_=4, to=120, width=5,
+        ttk.Spinbox(line2, from_=4, to=3600, width=6,
                     textvariable=self.sleep_item_sec).pack(side="left")
         ttk.Label(line2, foreground="#888",
                   text="(0.15 = rất nhẹ · 0.25 = nhẹ · 0.5 = rõ). Chỉ áp dụng khi có chọn "
@@ -872,6 +872,10 @@ class App:
                 isec = float(self.sleep_item_sec.get())
             except (TypeError, ValueError):
                 isec = 20.0
+            if not (4 <= isec <= 3600):              # >120s engine tự chuyển CHẾ ĐỘ MỤC DÀI
+                isec = min(max(isec, 4), 3600)       # (lặp COPY) nên nhận tới 3600
+                self.sleep_item_sec.set(f"{isec:g}")
+                self.status.set(tr("Giây mỗi mục chỉ nhận 4–3600s — đã tự chỉnh lại."))
             cmd += ["--item-sec", f"{isec:g}"]
             self.cfg["sleep_item_sec"] = self.sleep_item_sec.get()
             save_config(self.cfg)
@@ -890,7 +894,8 @@ class App:
 
         def worker():
             try:
-                env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+                env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8",
+                           PYTHONUNBUFFERED="1")      # log engine hiện NGAY (không buffer)
                 flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
                 p = subprocess.Popen(cmd, cwd=HERE, stdout=subprocess.PIPE,
                                      stderr=subprocess.STDOUT, text=True,
@@ -1107,20 +1112,17 @@ class App:
         if f:
             self.scenes_file.set(f)
 
-    def _pick_dir(self):
+    def _pick_dir(self, var=None):
+        """Chọn thư mục -> đặt vào var; không truyền var = ô Thư mục ẢNH/CLIP (trang Render).
+        ⚠️ TRÁNH định nghĩa trùng tên lần 2 — bản sau ĐÈ bản trước làm nút cũ câm lặng."""
         d = filedialog.askdirectory(initialdir=HERE)
         if d:
-            self.images.set(d)
+            (var if var is not None else self.images).set(d)
 
     def _pick_file(self, var, types):
         f = filedialog.askopenfilename(initialdir=HERE, filetypes=types)
         if f:
             var.set(f)
-
-    def _pick_dir(self, var):
-        d = filedialog.askdirectory(initialdir=HERE)
-        if d:
-            var.set(d)
 
     def _pick_save(self):
         f = filedialog.asksaveasfilename(initialdir=dflt("output"),
@@ -1581,7 +1583,8 @@ class App:
 
         def worker():
             try:
-                env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+                env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8",
+                           PYTHONUNBUFFERED="1")      # log engine hiện NGAY (không buffer)
                 flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
                 p = subprocess.Popen(cmd, cwd=HERE, stdout=subprocess.PIPE,
                                      stderr=subprocess.STDOUT, text=True,
@@ -1623,7 +1626,8 @@ class App:
 
         def worker():
             try:
-                env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+                env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8",
+                           PYTHONUNBUFFERED="1")      # log engine hiện NGAY (không buffer)
                 flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
                 p = subprocess.Popen(cmd, cwd=HERE, stdout=subprocess.PIPE,
                                      stderr=subprocess.STDOUT, text=True,
