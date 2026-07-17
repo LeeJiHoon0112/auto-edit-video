@@ -233,6 +233,16 @@ EN = {
     "• (2/2) Lặp nền cho hết audio + ghép tiếng + fade (video COPY -> nhanh)...":
         "• (2/2) Loop background over full audio + mux + fade (video COPY -> fast)...",
     "1 ảnh / 1 đoạn phụ đề": "1 image per subtitle segment",
+    # ----- Video ngủ: FOLDER nhiều ảnh/clip -----
+    "⏱ Giây mỗi mục (folder):": "⏱ Seconds per item (folder):",
+    "Chưa chọn nền (1 file clip/ảnh, hoặc 1 folder nhiều ảnh/clip).":
+        "No background selected (pick 1 clip/image file, or 1 folder of images/clips).",
+    "Nền = 1 FILE (clip ngắn tự LOOP LIỀN MẠCH — render vài phút) hoặc 1 FOLDER "
+    "nhiều ảnh/clip (nút 📁 Folder — tự XOAY VÒNG + crossfade theo tên file, "
+    "dựng đoạn loop lâu hơn chút).":
+        "Background = 1 FILE (a short clip loops SEAMLESSLY — renders in minutes) or 1 FOLDER "
+        "of images/clips (📁 Folder button — auto-ROTATES + crossfades in filename order; "
+        "building the loop takes a bit longer).",
     # ----- Popup còn lại hay gặp -----
     "Chưa có video nào trong hàng đợi.": "The queue has no videos yet.",
     "Phải giữ ít nhất 1 profile.": "At least 1 profile must remain.",
@@ -283,6 +293,14 @@ RULES = [
      "Enter an API key for '{0}' in the Settings tab first."),
     (re.compile(r"^Vào Cài đặt nhập key cho '(.+)'\.$"),
      "Enter a key for '{0}' in Settings."),
+    # Video ngủ: FOLDER nhiều ảnh/clip
+    (re.compile(r"^thư mục (\d+) mục$"), "folder ({0} items)"),
+    (re.compile(r"^• Ghép (\d+) mục nền \(xoay vòng \+ crossfade, mỗi mục ≤(.+)s\)\.\.\.$"),
+     "• Chaining {0} background items (rotation + crossfade, ≤{1}s each)..."),
+    (re.compile(r"^  \(nhiều mục: dùng (\d+)/(\d+) mục đầu cho đoạn loop\)$"),
+     "  (many items: using the first {0}/{1} for the loop)"),
+    (re.compile(r"^Thư mục nền không có ảnh/clip nào: (.+)$"),
+     "No images/clips found in background folder: {0}"),
     # mode_label (kiểu rải ảnh) trong dòng Layout
     (re.compile(r"^theo bảng cảnh \((\d+) cảnh, khóa timestamp SRT\)$"),
      "scene table ({0} scenes, locked to SRT timestamps)"),

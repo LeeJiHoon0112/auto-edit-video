@@ -101,17 +101,19 @@ def _overlay(effect, intensity):
             f"[bg][fx]blend=all_mode=screen:all_opacity={op:.3f}[out]")
 
 
-def _seamless_video_loop(clip, tmp):
+def _seamless_video_loop(clip, tmp, cap=LOOP_SEC, name="loopclip.mp4"):
     """Clip video nền -> bản LOOP LIỀN MẠCH: crossfade đuôi clip hòa vào đầu (frame cuối ≈
-    frame đầu) -> lặp copy KHÔNG thấy điểm nối. Giữ NGUYÊN cảnh, không thêm gì."""
+    frame đầu) -> lặp copy KHÔNG thấy điểm nối. Giữ NGUYÊN cảnh, không thêm gì.
+    cap: cắt tối đa bấy nhiêu giây đầu (None = giữ NGUYÊN — dùng cho chuỗi FOLDER nhiều
+    mục, cắt 20s sẽ mất các mục sau)."""
     d_full = ae.probe_duration(clip) or 10.0
     # CHỈ lấy tối đa LOOP_SEC giây ĐẦU clip để loop — KHÔNG re-encode cả clip. Clip nền dài
     # (vài phút) trên máy KHÔNG GPU (libx264): dựng cả clip -> vượt timeout 600s -> TREO
     # ("Tạo video ngủ thất bại mã 1"). Cắt còn ~LOOP_SEC: encode vài giây là xong, vẫn LOOP
     # LIỀN MẠCH + giữ nguyên cảnh (20s đầu clip là dư để mắt không thấy điểm lặp).
-    d = min(d_full, float(LOOP_SEC))
+    d = min(d_full, float(cap)) if cap else d_full
     cf = min(1.2, max(0.4, d / 6.0))           # thời lượng crossfade (giây)
-    out = os.path.join(tmp, "loopclip.mp4")
+    out = os.path.join(tmp, name)
     # ĐỌC CLIP 2 LẦN (2 input) thay vì split: nhánh "đầu" và "đuôi" đọc ở vị trí lệch xa nhau
     # -> nếu dùng split, ffmpeg phải BUFFER cả clip trong RAM -> "Cannot allocate memory" với
     # clip dài / máy RAM thấp. 2 input decode ĐỘC LẬP -> không buffer -> nhẹ RAM, chạy máy yếu.
@@ -128,9 +130,85 @@ def _seamless_video_loop(clip, tmp):
     return out
 
 
-def _build_loopclip(bg, effect, intensity, tmp):
-    """Dựng đoạn nền NGẮN loop LIỀN MẠCH. Clip video -> crossfade seamless (giữ nguyên cảnh);
-    ảnh tĩnh -> render LOOP_SEC + (hiệu ứng nếu chọn)."""
+IMG_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
+
+
+def _norm_segment(src, idx, tmp, item_sec, effect, intensity):
+    """Chuẩn hóa 1 mục trong FOLDER nền thành đoạn cùng kích thước/fps để ghép xoay vòng.
+    Clip video -> lấy tối đa item_sec giây đầu; ảnh -> giữ item_sec giây (+hiệu ứng nếu chọn)."""
+    out = os.path.join(tmp, f"seg{idx:02d}.mp4")
+    scale = (f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase,"
+             f"crop={WIDTH}:{HEIGHT},fps={FPS},setsar=1")
+    if src.lower().endswith(ae.VIDEO_EXTS):
+        d = ae.probe_duration(src) or item_sec
+        t = max(2.0, min(d, item_sec))
+        cmd = ([ae.FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-i", src,
+                "-vf", scale, "-t", f"{t:.3f}", "-an", "-r", str(FPS)]
+               + ae.enc_args() + ["-pix_fmt", "yuv420p", out])
+    else:
+        if effect == "none":
+            fc = f"[0:v]{scale}[out]"
+            inputs = ["-loop", "1", "-i", src]
+        else:
+            tex = _make_texture(effect, intensity, tmp)
+            fc = f"[0:v]{scale}[bg];" + _overlay(effect, intensity)
+            inputs = ["-loop", "1", "-i", src, "-loop", "1", "-i", tex]
+        cmd = ([ae.FFMPEG, "-y", "-hide_banner", "-loglevel", "error"] + inputs
+               + ["-filter_complex", fc, "-map", "[out]", "-t", f"{item_sec:.3f}",
+                  "-r", str(FPS)] + ae.enc_args() + ["-pix_fmt", "yuv420p", out])
+    ae.run(cmd, timeout=600)
+    return out
+
+
+def _folder_loop(folder, effect, intensity, tmp, item_sec):
+    """FOLDER nhiều ảnh/clip -> 1 đoạn nền XOAY VÒNG liền mạch: chuẩn hóa từng mục (theo
+    tên file) -> nối crossfade -> hòa đuôi về mục đầu (seamless) -> loop-copy như thường."""
+    files = sorted(f for f in os.listdir(folder)
+                   if f.lower().endswith(ae.VIDEO_EXTS + IMG_EXTS))
+    paths = [os.path.join(folder, f) for f in files]
+    if not paths:
+        raise SystemExit(tr(f"Thư mục nền không có ảnh/clip nào: {folder}"))
+    if len(paths) == 1:
+        return _build_loopclip(paths[0], effect, intensity, tmp, item_sec)
+    # Giới hạn TỔNG thời lượng đoạn loop (máy KHÔNG GPU encode chuỗi quá dài sẽ treo
+    # timeout — bài học gotcha #10). Thừa mục -> chỉ dùng các mục đầu.
+    MAX_TOTAL = 240.0
+    max_items = max(2, int(MAX_TOTAL // max(4.0, float(item_sec))))
+    if len(paths) > max_items:
+        print(tr(f"  (nhiều mục: dùng {max_items}/{len(paths)} mục đầu cho đoạn loop)"))
+        paths = paths[:max_items]
+    print(tr(f"• Ghép {len(paths)} mục nền (xoay vòng + crossfade, mỗi mục ≤{item_sec:g}s)..."))
+    segs, durs = [], []
+    for i, p in enumerate(paths):
+        s = _norm_segment(p, i, tmp, item_sec, effect, intensity)
+        segs.append(s)
+        durs.append(ae.probe_duration(s) or item_sec)
+    # Nối chuỗi bằng xfade (cf giây mỗi mối), rồi hòa đuôi↔đầu bằng _seamless_video_loop
+    # (cap=None để GIỮ NGUYÊN cả chuỗi — cắt 20s sẽ mất các mục sau)
+    cf = 1.0
+    inputs, fc, prev = [], [], "[0:v]"
+    for s in segs:
+        inputs += ["-i", s]
+    run_len = durs[0]
+    for i in range(1, len(segs)):
+        lbl = f"[x{i}]"
+        fc.append(f"{prev}[{i}:v]xfade=transition=fade:duration={cf}:"
+                  f"offset={run_len - cf:.3f}{lbl}")
+        prev = lbl
+        run_len += durs[i] - cf
+    chain = os.path.join(tmp, "chain.mp4")
+    cmd = ([ae.FFMPEG, "-y", "-hide_banner", "-loglevel", "error"] + inputs
+           + ["-filter_complex", ";".join(fc), "-map", prev, "-t", f"{run_len:.3f}",
+              "-r", str(FPS)] + ae.enc_args() + ["-pix_fmt", "yuv420p", chain])
+    ae.run(cmd, timeout=600)
+    return _seamless_video_loop(chain, tmp, cap=None)
+
+
+def _build_loopclip(bg, effect, intensity, tmp, item_sec=20.0):
+    """Dựng đoạn nền NGẮN loop LIỀN MẠCH. FOLDER nhiều ảnh/clip -> xoay vòng; clip video ->
+    crossfade seamless (giữ nguyên cảnh); ảnh tĩnh -> render LOOP_SEC + (hiệu ứng nếu chọn)."""
+    if os.path.isdir(bg):
+        return _folder_loop(bg, effect, intensity, tmp, item_sec)
     if bg.lower().endswith(ae.VIDEO_EXTS):
         return _seamless_video_loop(bg, tmp)
     out = os.path.join(tmp, "loopclip.mp4")
@@ -176,11 +254,11 @@ def _viz_filter(viz):
 
 def make_sleep_video(bg, audio, out, effect="rain", intensity="vua", fade=4.0,
                      max_seconds=None, encoder="auto", viz="none",
-                     ambient=None, ambient_volume=0.25):
+                     ambient=None, ambient_volume=0.25, item_sec=20.0):
     if not ae.FFMPEG:
         raise SystemExit("Không tìm thấy ffmpeg.")
-    if not os.path.isfile(bg):
-        raise SystemExit(f"Không thấy file nền: {bg}")
+    if not (os.path.isfile(bg) or os.path.isdir(bg)):     # nhận cả FOLDER nhiều ảnh/clip
+        raise SystemExit(f"Không thấy file/thư mục nền: {bg}")
     if not os.path.isfile(audio):
         raise SystemExit(f"Không thấy file audio: {audio}")
     enc = ae.detect_encoder(encoder)[0]
@@ -190,7 +268,14 @@ def make_sleep_video(bg, audio, out, effect="rain", intensity="vua", fade=4.0,
     if adur < 1:
         raise SystemExit("Audio quá ngắn / không đọc được độ dài.")
 
-    kind = tr("video loop") if bg.lower().endswith(ae.VIDEO_EXTS) else tr("ảnh tĩnh")
+    if os.path.isdir(bg):
+        n_items = len([f for f in os.listdir(bg)
+                       if f.lower().endswith(ae.VIDEO_EXTS + IMG_EXTS)])
+        kind = tr(f"thư mục {n_items} mục")
+    elif bg.lower().endswith(ae.VIDEO_EXTS):
+        kind = tr("video loop")
+    else:
+        kind = tr("ảnh tĩnh")
     print(tr(f"• Nền: {os.path.basename(bg)} ({kind}) | Hiệu ứng: {effect}/{intensity} | "
              f"Encoder: {enc}"))
     print(tr(f"• Audio: {os.path.basename(audio)} | Video dài: {adur:.0f}s "
@@ -199,7 +284,7 @@ def make_sleep_video(bg, audio, out, effect="rain", intensity="vua", fade=4.0,
     tmp = tempfile.mkdtemp(prefix="sleep_")
     try:
         print(tr("• (1/2) Dựng đoạn nền loop + hiệu ứng..."))
-        loop = _build_loopclip(bg, effect, intensity, tmp)
+        loop = _build_loopclip(bg, effect, intensity, tmp, item_sec)
 
         os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
         fo = max(0.0, adur - fade)
@@ -273,11 +358,15 @@ def main():
                     help="File âm thanh NỀN phụ (mưa/gió/tuyết...) trộn cùng voice; tự lặp cho đủ dài.")
     ap.add_argument("--ambient-volume", type=float, default=0.25,
                     help="Âm lượng âm thanh nền (0-1), mặc định 0.25 (nhẹ).")
+    ap.add_argument("--item-sec", type=float, default=20.0,
+                    help="Khi --bg là FOLDER nhiều ảnh/clip: số giây mỗi mục trong vòng xoay "
+                         "(ảnh giữ đúng bấy nhiêu; clip lấy tối đa bấy nhiêu giây đầu).")
     args = ap.parse_args()
     make_sleep_video(args.bg, args.audio, args.out, effect=args.effect,
                      intensity=args.intensity, fade=args.fade,
                      max_seconds=args.max_seconds, encoder=args.encoder, viz=args.viz,
-                     ambient=args.ambient, ambient_volume=args.ambient_volume)
+                     ambient=args.ambient, ambient_volume=args.ambient_volume,
+                     item_sec=args.item_sec)
 
 
 if __name__ == "__main__":

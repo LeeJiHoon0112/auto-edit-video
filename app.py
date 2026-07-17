@@ -43,8 +43,16 @@ def default_config():
         "model_cache": {},                          # danh sách model TỰ lấy từ API theo provider
         "profiles": {"Người que": DEFAULT_STYLE},
         "active_profile": "Người que",
-        "produce": "video",                         # image | video | i2v (kiểu sản xuất)
+        "produce": "video",                         # image | video | i2v | chain (kiểu sản xuất)
         "style_mode": "in_prompt",
+        # ⚠️ load_config CHỈ GIỮ key có trong default này — key mới PHẢI khai ở đây,
+        # không là "lưu xong mở lại mất" (đã dính với lang + sub_font/sub_mode...)
+        "lang": "",                                 # "" = lần đầu -> tự nhận theo locale
+        "kara_color": "#FFFF00",
+        "sub_font": "Arial Black",
+        "sub_mode": "word",
+        "sub_outline": "#000000",
+        "sleep_item_sec": "20",
         "main_character": "",
         "prompt_dir": "",                           # thư mục lưu prompt+scenes (trống=gốc)
         "queue": [],
@@ -270,6 +278,7 @@ class App:
         self.sleep_viz = tk.StringVar(value="none")    # visualizer âm thanh
         self.sleep_ambient = tk.StringVar(value="")    # âm thanh nền phụ (mưa/gió/tuyết)
         self.sleep_ambient_vol = tk.StringVar(value="0.25")
+        self.sleep_item_sec = tk.StringVar(value=str(self.cfg.get("sleep_item_sec", "20")))
         # Thư mục lưu prompt + scenes.csv (TÙY CHỌN). Trống = lưu ở gốc dự án (đè như cũ).
         self.prompt_dir = tk.StringVar(value=self.cfg.get("prompt_dir", ""))
         # File bảng cảnh scenes.csv CHỌN TAY (TÙY CHỌN). Trống = tự tìm. Chọn để chắc
@@ -766,9 +775,12 @@ class App:
     def _build_sleep(self, parent):
         f1 = ttk.LabelFrame(parent, text="Video ngủ dài (clip/ảnh nền + audio dài → 3-4 tiếng)")
         f1.pack(fill="x", padx=8, pady=6)
-        self._row(f1, "🎬 NỀN (clip / ảnh):", self.sleep_bg, lambda: self._pick_file(
+        rbg = self._row(f1, "🎬 NỀN (clip / ảnh):", self.sleep_bg, lambda: self._pick_file(
             self.sleep_bg, [("Clip / Ảnh", "*.mp4 *.mov *.mkv *.webm *.jpg *.jpeg *.png"),
                             ("Tất cả", "*.*")]))
+        # Chọn FOLDER nhiều ảnh/clip -> nền XOAY VÒNG liền mạch (crossfade giữa các mục)
+        ttk.Button(rbg, text="📁 Folder", width=9,
+                   command=lambda: self._pick_dir(self.sleep_bg)).pack(side="left")
         self._row(f1, "🎵 AUDIO dài (kịch bản):", self.sleep_audio, lambda: self._pick_file(
             self.sleep_audio, [("Audio", "*.mp3 *.wav *.m4a *.aac"), ("Tất cả", "*.*")]))
         self._row(f1, "🌧️ Âm thanh NỀN (mưa/gió/tuyết — tùy chọn):", self.sleep_ambient,
@@ -776,8 +788,9 @@ class App:
                   [("Audio", "*.mp3 *.wav *.m4a *.aac *.ogg"), ("Tất cả", "*.*")]))
         self._row(f1, "Xuất ra MP4:", self.sleep_out, self._pick_sleep_out)
         ttk.Label(f1, foreground="#888", wraplength=640,
-                  text="Clip nền ngắn (vd 10s) tự LOOP LIỀN MẠCH (crossfade) cho hết audio, GIỮ "
-                       "NGUYÊN cảnh. Render rất nhanh (loop-copy) — 4 tiếng cũng chỉ vài phút.").pack(
+                  text="Nền = 1 FILE (clip ngắn tự LOOP LIỀN MẠCH — render vài phút) hoặc 1 FOLDER "
+                       "nhiều ảnh/clip (nút 📁 Folder — tự XOAY VÒNG + crossfade theo tên file, "
+                       "dựng đoạn loop lâu hơn chút).").pack(
             fill="x", padx=12, pady=(0, 2))
 
         f2 = ttk.LabelFrame(parent, text="Tùy chọn")
@@ -799,6 +812,9 @@ class App:
         ttk.Label(line2, text="🔊 Âm lượng âm thanh nền:").pack(side="left")
         ttk.Spinbox(line2, from_=0.0, to=1.0, increment=0.05, width=5,
                     textvariable=self.sleep_ambient_vol).pack(side="left", padx=(4, 0))
+        ttk.Label(line2, text="⏱ Giây mỗi mục (folder):").pack(side="left", padx=(16, 2))
+        ttk.Spinbox(line2, from_=4, to=120, width=5,
+                    textvariable=self.sleep_item_sec).pack(side="left")
         ttk.Label(line2, foreground="#888",
                   text="(0.15 = rất nhẹ · 0.25 = nhẹ · 0.5 = rõ). Chỉ áp dụng khi có chọn "
                        "file âm thanh nền ở trên.").pack(side="left", padx=8)
@@ -833,8 +849,9 @@ class App:
     def run_sleep(self, preview=False):
         bg = (self.sleep_bg.get() or "").strip()
         audio = (self.sleep_audio.get() or "").strip()
-        if not os.path.isfile(bg):
-            messagebox.showwarning("Thiếu", "Chưa chọn clip/ảnh nền.")
+        if not (os.path.isfile(bg) or os.path.isdir(bg)):   # nhận cả FOLDER nhiều ảnh/clip
+            messagebox.showwarning(tr("Thiếu"),
+                                   tr("Chưa chọn nền (1 file clip/ảnh, hoặc 1 folder nhiều ảnh/clip)."))
             return
         if not os.path.isfile(audio):
             messagebox.showwarning("Thiếu", "Chưa chọn file audio dài.")
@@ -850,6 +867,14 @@ class App:
                "--bg", bg, "--audio", audio, "--out", out,
                "--effect", self.sleep_effect.get(), "--intensity", self.sleep_intensity.get(),
                "--fade", f"{fv}", "--viz", self.sleep_viz.get()]
+        if os.path.isdir(bg):                         # folder nhiều ảnh/clip -> giây mỗi mục
+            try:
+                isec = float(self.sleep_item_sec.get())
+            except (TypeError, ValueError):
+                isec = 20.0
+            cmd += ["--item-sec", f"{isec:g}"]
+            self.cfg["sleep_item_sec"] = self.sleep_item_sec.get()
+            save_config(self.cfg)
         amb = (self.sleep_ambient.get() or "").strip()
         if amb and os.path.isfile(amb):
             cmd += ["--ambient", amb,
@@ -1021,6 +1046,7 @@ class App:
         ttk.Label(f, text=label, width=18).pack(side="left")
         ttk.Entry(f, textvariable=var).pack(side="left", fill="x", expand=True)
         ttk.Button(f, text="Chọn...", command=cmd, width=8).pack(side="left", padx=4)
+        return f
 
     def _auto_voice(self):
         for n in ("voice.mp3", "voice.wav", "voice.m4a"):
@@ -1090,6 +1116,11 @@ class App:
         f = filedialog.askopenfilename(initialdir=HERE, filetypes=types)
         if f:
             var.set(f)
+
+    def _pick_dir(self, var):
+        d = filedialog.askdirectory(initialdir=HERE)
+        if d:
+            var.set(d)
 
     def _pick_save(self):
         f = filedialog.asksaveasfilename(initialdir=dflt("output"),
