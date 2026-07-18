@@ -95,6 +95,11 @@ EN = {
     "📋 File bảng cảnh (scenes.csv): để TRỐNG = tự tìm. NÊN CHỌN đúng scenes.csv của video này để render khớp tiếng (tránh dùng nhầm bảng cảnh video khác → cảnh lệch audio).":
         "📋 Scene table (scenes.csv): EMPTY = auto-detect. SHOULD pick this video's own scenes.csv so render matches the audio (a wrong table = scenes out of sync).",
     "Tùy chọn ghép": "Assembly options",
+    "📐 Khung hình:": "📐 Aspect ratio:",
+    "16:9 ngang (YouTube)": "16:9 landscape (YouTube)",
+    "9:16 dọc (Shorts/TikTok)": "9:16 portrait (Shorts/TikTok)",
+    "• Khung hình: 9:16 DỌC (1080x1920 — Shorts/TikTok/Reels)":
+        "• Aspect: 9:16 PORTRAIT (1080x1920 — Shorts/TikTok/Reels)",
     "Ken Burns (zoom ảnh tĩnh)": "Ken Burns (zoom stills)",
     "Chèn phụ đề": "Burn subtitles",
     "Crossfade ảnh": "Crossfade images",
@@ -171,8 +176,9 @@ EN = {
     "👁️ Xem trước style": "👁️ Preview style",
     "💾 Lưu profile này": "💾 Save this profile",
     "Key tại platform.openai.com/api-keys": "Get a key at platform.openai.com/api-keys",
-    "Key tại aistudio.google.com/apikey": "Get a key at aistudio.google.com/apikey",
-    "Key tại console.anthropic.com": "Get a key at console.anthropic.com",
+    "Key tại aistudio.google.com": "Get a key at aistudio.google.com",
+    "Key tại console.anthropic.com → Get API key":
+        "Get a key at console.anthropic.com → Get API key",
     # ----- Popup dùng chung (tiêu đề + nội dung hay gặp) -----
     "Thiếu": "Missing",
     "Lỗi": "Error",

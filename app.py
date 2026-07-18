@@ -48,6 +48,7 @@ def default_config():
         # ⚠️ load_config CHỈ GIỮ key có trong default này — key mới PHẢI khai ở đây,
         # không là "lưu xong mở lại mất" (đã dính với lang + sub_font/sub_mode...)
         "lang": "",                                 # "" = lần đầu -> tự nhận theo locale
+        "aspect": "16:9",                           # khung hình render: 16:9 | 9:16
         "kara_color": "#FFFF00",
         "sub_font": "Arial Black",
         "sub_mode": "word",
@@ -254,6 +255,7 @@ class App:
         self.out = tk.StringVar(value=dflt("output", "final.mp4"))
         self.secs = tk.StringVar(value="8")
         self.kenburns = tk.BooleanVar(value=True)
+        self.aspect = tk.StringVar(value=self.cfg.get("aspect", "16:9"))
         self.subs = tk.BooleanVar(value=True)
         self.kara_color = tk.StringVar(value=self.cfg.get("kara_color", "#FFFF00"))
         # Phụ đề: phông chữ + cách hiển thị + màu viền (mặc định = như cũ)
@@ -417,7 +419,10 @@ class App:
         self.cfg["lang"] = code
         save_config(self.cfg)
         i18n.translate_tree(self.root)
+        # Nhãn ĐỘNG gắn qua biến (textvariable) không nằm trong cây dịch -> set lại tay
         self.q_count.set(tr(f"{len(self.cfg.get('queue', []))} video trong hàng đợi"))
+        self._refresh_license_label()
+        self._update_key_hint()
         self.status.set(tr("Sẵn sàng."))
 
     def _check_update_now(self):
@@ -661,6 +666,15 @@ class App:
 
         f2 = ttk.LabelFrame(parent, text="Tùy chọn ghép")
         f2.pack(fill="x", padx=8, pady=6)
+        linea = ttk.Frame(f2)
+        linea.pack(fill="x", padx=10, pady=(8, 0))
+        ttk.Label(linea, text="📐 Khung hình:").pack(side="left")
+        ttk.Radiobutton(linea, text="16:9 ngang (YouTube)", value="16:9",
+                        variable=self.aspect, command=self._save_aspect
+                        ).pack(side="left", padx=(8, 0))
+        ttk.Radiobutton(linea, text="9:16 dọc (Shorts/TikTok)", value="9:16",
+                        variable=self.aspect, command=self._save_aspect
+                        ).pack(side="left", padx=(8, 0))
         line = ttk.Frame(f2)
         line.pack(fill="x", padx=10, pady=8)
         ttk.Checkbutton(line, text="Ken Burns (zoom ảnh tĩnh)",
@@ -1737,6 +1751,10 @@ class App:
         self._save_subopts()
         self.status.set(f"Đã áp preset phụ đề '{name}' (chữ {fg}, viền {outline}).")
 
+    def _save_aspect(self):
+        self.cfg["aspect"] = self.aspect.get()
+        save_config(self.cfg)
+
     def _save_subopts(self):
         """Lưu tùy chọn phụ đề (font + cách hiện + màu) vào config."""
         self.cfg["sub_font"] = self.sub_font.get().strip()
@@ -1753,6 +1771,7 @@ class App:
             "images": self.images.get(), "voice": self.voice.get(),
             "scenes": self._scenes_path(), "secs": self.secs.get(),
             "kenburns": self.kenburns.get(), "subs": self.subs.get(),
+            "aspect": self.aspect.get(),
             "crossfade": self.crossfade.get(), "transition": self.transition.get(),
             "color": self.color.get(), "vignette": self.vignette.get(),
             "grain": self.grain.get(), "bgm": self.bgm.get(),
@@ -1772,6 +1791,8 @@ class App:
             cmd += ["--scenes", job["scenes"]]
         else:
             cmd += ["--seconds-per-image", str(job.get("secs", "8"))]
+        if (job.get("aspect") or "16:9") == "9:16":   # job cũ không có key -> 16:9 như xưa
+            cmd += ["--aspect", "9:16"]
         if not job.get("kenburns", True):
             cmd += ["--no-kenburns"]
         if not job.get("subs", True):

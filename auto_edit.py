@@ -631,6 +631,9 @@ def main():
                          "kara=cả câu + tô màu dần từng từ theo voice")
     ap.add_argument("--sub-outline-color", default=None,
                     help="Màu VIỀN chữ phụ đề (hex #RRGGBB, mặc định đen) — cho preset Neon...")
+    ap.add_argument("--aspect", choices=["16:9", "9:16"], default="16:9",
+                    help="Khung hình video: 16:9 ngang 1920x1080 (mặc định, YouTube) | "
+                         "9:16 dọc 1080x1920 (Shorts/TikTok/Reels)")
     # --- Màu phim (#3) ---
     ap.add_argument("--color", choices=["none", "cinematic", "cold", "warm", "bw"],
                     default="none",
@@ -659,6 +662,12 @@ def main():
 
     if not os.path.isfile(args.srt):
         raise SystemExit(f"Không thấy file SRT: {args.srt}")
+
+    # Khung hình: 9:16 dọc -> đổi kích thước TOÀN CỤC (mọi filter/Ken Burns/phụ đề ASS
+    # đều đọc WIDTH/HEIGHT lúc chạy nên tự theo)
+    if args.aspect == "9:16":
+        globals()["WIDTH"], globals()["HEIGHT"] = 1080, 1920
+        print(tr("• Khung hình: 9:16 DỌC (1080x1920 — Shorts/TikTok/Reels)"))
 
     segs = parse_srt(args.srt)
     if not segs:

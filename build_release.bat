@@ -14,6 +14,11 @@ if errorlevel 1 goto :notenabled
 echo [OK] config.py LICENSE_ENABLED = True.
 echo.
 
+echo [0/2] PREFLIGHT - quet loi hoi quy truoc khi build (trung ten ham, mat config, i18n...)
+python preflight.py
+if errorlevel 1 goto :preflightfail
+echo.
+
 echo [1/2] Cai/cap nhat cong cu build + thu vien license...
 python -m pip install --upgrade nuitka requests cryptography certifi
 echo.
@@ -24,6 +29,10 @@ echo.
 
 if exist "release\AutoEditVideo.exe" goto :done
 echo  !! Build that bai - xem loi o tren.
+goto :end
+
+:preflightfail
+echo  !! PREFLIGHT FAIL - sua het loi o tren roi moi duoc build/release.
 goto :end
 
 :notenabled
