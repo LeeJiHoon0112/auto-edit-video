@@ -49,6 +49,8 @@ def default_config():
         # không là "lưu xong mở lại mất" (đã dính với lang + sub_font/sub_mode...)
         "lang": "",                                 # "" = lần đầu -> tự nhận theo locale
         "aspect": "16:9",                           # khung hình render: 16:9 | 9:16
+        "clip_audio": False,                        # giữ âm thanh gốc của clip
+        "clip_volume": "0.25",
         "kara_color": "#FFFF00",
         "sub_font": "Arial Black",
         "sub_mode": "word",
@@ -267,6 +269,8 @@ class App:
         self.color = tk.StringVar(value="none")        # màu phim (#3)
         self.vignette = tk.BooleanVar(value=False)
         self.grain = tk.BooleanVar(value=False)
+        self.clip_audio = tk.BooleanVar(value=bool(self.cfg.get("clip_audio", False)))
+        self.clip_volume = tk.StringVar(value=str(self.cfg.get("clip_volume", "0.25")))
         self.bgm = tk.StringVar(value="")              # file nhạc nền (#4)
         self.bgm_volume = tk.StringVar(value="0.18")
         self.duck = tk.BooleanVar(value=True)          # tự hạ nhạc khi có lời (ducking)
@@ -765,6 +769,16 @@ class App:
                     textvariable=self.bgm_volume).pack(side="left")
         ttk.Checkbutton(line3, text="Tự hạ nhạc khi có lời",
                         variable=self.duck).pack(side="left", padx=12)
+
+        # Âm thanh GỐC của clip Veo (mặc định TẮT tiếng như cũ; bật -> trộn dưới voice)
+        line3b = ttk.Frame(f2)
+        line3b.pack(fill="x", padx=10, pady=(0, 8))
+        ttk.Checkbutton(line3b, text="🔉 Giữ âm thanh gốc của clip (mặc định tắt tiếng)",
+                        variable=self.clip_audio,
+                        command=self._save_clip_audio).pack(side="left")
+        ttk.Label(line3b, text="Âm lượng tiếng clip:").pack(side="left", padx=(12, 2))
+        ttk.Spinbox(line3b, from_=0.0, to=1.0, increment=0.05, width=5,
+                    textvariable=self.clip_volume).pack(side="left")
 
         bar = ttk.Frame(parent)
         bar.pack(fill="x", padx=8, pady=8)
@@ -1755,6 +1769,11 @@ class App:
         self.cfg["aspect"] = self.aspect.get()
         save_config(self.cfg)
 
+    def _save_clip_audio(self):
+        self.cfg["clip_audio"] = bool(self.clip_audio.get())
+        self.cfg["clip_volume"] = self.clip_volume.get().strip()
+        save_config(self.cfg)
+
     def _save_subopts(self):
         """Lưu tùy chọn phụ đề (font + cách hiện + màu) vào config."""
         self.cfg["sub_font"] = self.sub_font.get().strip()
@@ -1772,6 +1791,7 @@ class App:
             "scenes": self._scenes_path(), "secs": self.secs.get(),
             "kenburns": self.kenburns.get(), "subs": self.subs.get(),
             "aspect": self.aspect.get(),
+            "clip_audio": self.clip_audio.get(), "clip_volume": self.clip_volume.get(),
             "crossfade": self.crossfade.get(), "transition": self.transition.get(),
             "color": self.color.get(), "vignette": self.vignette.get(),
             "grain": self.grain.get(), "bgm": self.bgm.get(),
@@ -1793,6 +1813,12 @@ class App:
             cmd += ["--seconds-per-image", str(job.get("secs", "8"))]
         if (job.get("aspect") or "16:9") == "9:16":   # job cũ không có key -> 16:9 như xưa
             cmd += ["--aspect", "9:16"]
+        if job.get("clip_audio"):                      # giữ âm thanh gốc của clip
+            try:
+                cv = float(job.get("clip_volume", "0.25"))
+            except (TypeError, ValueError):
+                cv = 0.25
+            cmd += ["--keep-clip-audio", "--clip-volume", f"{min(max(cv, 0.0), 1.0):g}"]
         if not job.get("kenburns", True):
             cmd += ["--no-kenburns"]
         if not job.get("subs", True):

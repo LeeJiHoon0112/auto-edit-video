@@ -442,6 +442,74 @@ def _maybe_shrink_image(media, tmp_dir):
 # ----------------------------------------------------------------------------
 # Tạo từng cảnh (ảnh -> clip mp4) với Ken Burns + fade
 # ----------------------------------------------------------------------------
+def _clip_fit_mode(duration, clip_len, clip_fit):
+    """Chọn cách khớp clip vào cảnh — DÙNG CHUNG cho nhánh VIDEO lẫn nhánh ÂM THANH gốc
+    của clip (giữ đồng bộ tuyệt đối). ratio >1: clip ngắn hơn cảnh."""
+    ratio = duration / clip_len if clip_len else 1.0
+    mode = clip_fit
+    if mode == "auto":
+        # Ưu tiên 'cut' khi clip ĐỦ DÀI (>= ~96% cảnh): giữ NGUYÊN frame gốc của Veo
+        # -> KHÔNG đổi tốc độ, KHÔNG nhân frame -> hết rung (judder). Chỉ làm chậm khi
+        # clip NGẮN HƠN cảnh và lệch ít; lệch nhiều thì lặp.
+        if ratio <= 1.04:
+            mode = "cut"             # clip >= cảnh -> cắt lấy phần đầu (mượt nhất)
+        elif ratio <= 1.25:
+            mode = "speed"           # clip ngắn hơn chút -> làm chậm nhẹ cho khớp
+        else:
+            mode = "loop"            # clip ngắn hơn nhiều -> lặp cho đủ
+    return mode, ratio
+
+
+def probe_has_audio(path):
+    """Clip có track âm thanh không (clip Veo có cái câm cái không)."""
+    try:
+        out = subprocess.run([FFPROBE, "-v", "error", "-select_streams", "a",
+                              "-show_entries", "stream=codec_type", "-of", "csv=p=0",
+                              path], capture_output=True, text=True, timeout=30).stdout
+        return "audio" in (out or "")
+    except Exception:
+        return False
+
+
+def build_clip_audio_track(scenes, tmp, clip_fit):
+    """Track ÂM THANH GỐC của clip, khớp đúng timeline cảnh: clip có tiếng -> lấy đoạn
+    theo ĐÚNG chế độ khớp video (cut/loop/speed — speed dùng atempo cho khỏi lệch hình);
+    ảnh & clip câm -> khoảng LẶNG cùng độ dài. apad + -t để mỗi mảnh CHÍNH XÁC bằng cảnh
+    (không trôi dồn). Trả về wav 48k stereo, hoặc None nếu không clip nào có tiếng."""
+    pieces, any_audio = [], False
+    for i, (src, d) in enumerate(scenes):
+        out = os.path.join(tmp, f"aud_{i:04d}.wav")
+        if src.lower().endswith(VIDEO_EXTS) and probe_has_audio(src):
+            any_audio = True
+            clip_len = probe_duration(src) or d
+            mode, ratio = _clip_fit_mode(d, clip_len, clip_fit)
+            af = "aresample=48000,aformat=channel_layouts=stereo,apad"
+            pre = []
+            if mode == "speed":
+                af = f"atempo={min(2.0, max(0.5, 1.0 / ratio)):.4f}," + af
+            elif mode == "loop":
+                pre = ["-stream_loop", "-1"]
+            cmd = ([FFMPEG, "-y", "-hide_banner", "-loglevel", "error"] + pre
+                   + ["-i", src, "-vn", "-af", af, "-t", f"{d:.3f}",
+                      "-c:a", "pcm_s16le", out])
+        else:
+            cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+                   "-i", "anullsrc=r=48000:cl=stereo", "-t", f"{d:.3f}",
+                   "-c:a", "pcm_s16le", out]
+        run(cmd, timeout=SCENE_TIMEOUT)
+        pieces.append(out)
+    if not any_audio:
+        return None
+    lst = os.path.join(tmp, "concat_aud.txt")
+    with open(lst, "w", encoding="utf-8") as f:
+        for p in pieces:
+            f.write("file '" + p.replace("\\", "/") + "'\n")
+    outw = os.path.join(tmp, "clip_audio.wav")
+    run([FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-f", "concat", "-safe", "0",
+         "-i", lst, "-c:a", "pcm_s16le", outw])
+    return outw
+
+
 def build_clip(media, duration, out_path, kenburns=True, index=0, clip_fit="auto",
                edge_fade=True):
     frames = max(1, round(duration * FPS))
@@ -452,19 +520,7 @@ def build_clip(media, duration, out_path, kenburns=True, index=0, clip_fit="auto
         clip_len = probe_duration(media) or duration
         base = (f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase,"
                 f"crop={WIDTH}:{HEIGHT},setsar=1")
-        ratio = duration / clip_len      # >1: phải kéo dài (chậm) | <1: rút ngắn
-
-        mode = clip_fit
-        if mode == "auto":
-            # Ưu tiên 'cut' khi clip ĐỦ DÀI (>= ~96% cảnh): giữ NGUYÊN frame gốc của Veo
-            # -> KHÔNG đổi tốc độ, KHÔNG nhân frame -> hết rung (judder). Chỉ làm chậm khi
-            # clip NGẮN HƠN cảnh và lệch ít; lệch nhiều thì lặp.
-            if ratio <= 1.04:
-                mode = "cut"             # clip >= cảnh -> cắt lấy phần đầu (mượt nhất)
-            elif ratio <= 1.25:
-                mode = "speed"           # clip ngắn hơn chút -> làm chậm nhẹ cho khớp
-            else:
-                mode = "loop"            # clip ngắn hơn nhiều -> lặp cho đủ
+        mode, ratio = _clip_fit_mode(duration, clip_len, clip_fit)
 
         if mode == "speed":
             vf = f"setpts={ratio:.4f}*PTS,{base},fps={FPS},format=yuv420p"
@@ -631,6 +687,11 @@ def main():
                          "kara=cả câu + tô màu dần từng từ theo voice")
     ap.add_argument("--sub-outline-color", default=None,
                     help="Màu VIỀN chữ phụ đề (hex #RRGGBB, mặc định đen) — cho preset Neon...")
+    ap.add_argument("--keep-clip-audio", action="store_true",
+                    help="GIỮ âm thanh gốc của clip (mặc định TẮT tiếng clip như cũ); "
+                         "trộn dưới voice với âm lượng --clip-volume")
+    ap.add_argument("--clip-volume", type=float, default=0.25,
+                    help="Âm lượng âm thanh gốc của clip (0-1, mặc định 0.25)")
     ap.add_argument("--aspect", choices=["16:9", "9:16"], default="16:9",
                     help="Khung hình video: 16:9 ngang 1920x1080 (mặc định, YouTube) | "
                          "9:16 dọc 1080x1920 (Shorts/TikTok/Reels)")
@@ -830,6 +891,14 @@ def main():
                     i += 1
             concat_copy(segments, silent, tmp)
 
+        # 2b) Track ÂM THANH GỐC của clip (nếu user chọn giữ) — khớp đúng timeline cảnh
+        clipsnd = None
+        if args.keep_clip_audio:
+            print(tr("• Tách âm thanh gốc của clip (khớp từng cảnh)..."))
+            clipsnd = build_clip_audio_track(scenes, tmp, args.clip_fit)
+            if not clipsnd:
+                print(tr("  (không clip nào có âm thanh — bỏ qua)"))
+
         # 3) Pass cuối: màu phim + vignette + hạt phim + phụ đề + voice + NHẠC NỀN
         os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
         out_abs = os.path.abspath(args.out)
@@ -857,35 +926,52 @@ def main():
             vchain.append("subtitles=subs.ass")
 
         cmd = [FFMPEG, "-y", "-i", silent]
+        aidx, nin = {}, 1                              # chỉ số input audio động
         if voice:
             cmd += ["-i", os.path.abspath(voice)]
+            aidx["voice"] = nin; nin += 1
         if bgm:
             cmd += ["-stream_loop", "-1", "-i", bgm]   # lặp nhạc cho đủ dài video
+            aidx["bgm"] = nin; nin += 1
+        if clipsnd:
+            cmd += ["-i", clipsnd]                     # tiếng gốc của clip (đã khớp cảnh)
+            aidx["snd"] = nin; nin += 1
 
-        if bgm:
-            # Có nhạc nền -> gộp tất cả vào -filter_complex (video + trộn audio)
-            bidx = 2 if voice else 1
+        if bgm or clipsnd:
+            # Có nhạc nền / tiếng clip -> gộp vào -filter_complex (video + trộn audio)
             fc = []
             if vchain:
                 fc.append(f"[0:v]{','.join(vchain)}[v]")
                 vmap = "[v]"
             else:
                 vmap = "0:v:0"
-            bvol = max(0.0, min(2.0, args.bgm_volume))
-            fo = max(0.0, vid_dur - 2.0)                # nhạc fade nhỏ 2s cuối
-            fc.append(f"[{bidx}:a]volume={bvol:.3f},"
-                      f"afade=t=out:st={fo:.2f}:d=2,atrim=0:{vid_dur:.3f}[bgm]")
+            terms = []                                 # các nhánh audio đưa vào amix
+            if bgm:
+                bvol = max(0.0, min(2.0, args.bgm_volume))
+                fo = max(0.0, vid_dur - 2.0)           # nhạc fade nhỏ 2s cuối
+                fc.append(f"[{aidx['bgm']}:a]volume={bvol:.3f},"
+                          f"afade=t=out:st={fo:.2f}:d=2,atrim=0:{vid_dur:.3f}[bgm]")
+            if clipsnd:
+                cvol = max(0.0, min(2.0, args.clip_volume))
+                fc.append(f"[{aidx['snd']}:a]volume={cvol:.3f}[csnd]")
+                terms.append("[csnd]")
             if voice:
-                if not args.no_duck:
+                if bgm and not args.no_duck:
                     # ducking: nhạc TỰ NHỎ lại khi có lời (voice làm sidechain)
-                    fc.append("[1:a]asplit=2[vmix][vsc]")
+                    fc.append(f"[{aidx['voice']}:a]asplit=2[vmix][vsc]")
                     fc.append("[bgm][vsc]sidechaincompress=threshold=0.05:ratio=8:"
                               "attack=15:release=300[bgd]")
-                    fc.append("[bgd][vmix]amix=inputs=2:normalize=0[aout]")
+                    terms += ["[bgd]", "[vmix]"]
                 else:
-                    fc.append("[bgm][1:a]amix=inputs=2:normalize=0[aout]")
+                    if bgm:
+                        terms.append("[bgm]")
+                    terms.append(f"[{aidx['voice']}:a]")
+            elif bgm:
+                terms.append("[bgm]")
+            if len(terms) == 1:
+                fc.append(f"{terms[0]}anull[aout]")
             else:
-                fc.append("[bgm]anull[aout]")
+                fc.append(f"{''.join(terms)}amix=inputs={len(terms)}:normalize=0[aout]")
             cmd += (["-filter_complex", ";".join(fc), "-map", vmap, "-map", "[aout]"]
                     + enc_args() + ["-pix_fmt", "yuv420p",
                     "-c:a", "aac", "-b:a", "192k", "-t", f"{vid_dur:.3f}", out_abs])

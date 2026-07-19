@@ -117,6 +117,12 @@ EN = {
     "Vignette (tối góc)": "Vignette",
     "Hạt phim": "Film grain",
     "🎵 Nhạc nền:": "🎵 Background music:",
+    "🔉 Giữ âm thanh gốc của clip (mặc định tắt tiếng)":
+        "🔉 Keep the clips' original audio (muted by default)",
+    "Âm lượng tiếng clip:": "Clip audio volume:",
+    "• Tách âm thanh gốc của clip (khớp từng cảnh)...":
+        "• Extracting the clips' original audio (scene-aligned)...",
+    "  (không clip nào có âm thanh — bỏ qua)": "  (no clip has audio — skipped)",
     "Âm lượng:": "Volume:",
     "Tự hạ nhạc khi có lời": "Auto-duck music under voice",
     "▶  RENDER VIDEO": "▶  RENDER VIDEO",
@@ -205,6 +211,13 @@ EN = {
     "Mở trang tải bản mới ngay?": "Open the download page now?",
     "Chưa kiểm tra được bản mới — hãy kiểm tra kết nối mạng.":
         "Could not check for updates — please check your internet connection.",
+    # ----- Trạng thái license (license_client.check trả tiếng Việt) -----
+    "Chưa kích hoạt.": "Not activated.",
+    "License không hợp lệ (chữ ký sai).": "Invalid license (bad signature).",
+    "License này không dùng được trên máy hiện tại.": "This license is not valid on this machine.",
+    "License này không dành cho phần mềm này.": "This license is for a different product.",
+    "License đã hết hạn.": "License expired.",
+    "Phản hồi server không hợp lệ.": "Invalid server response.",
     # ----- Hộp thoại kích hoạt license -----
     "Kích hoạt bản quyền — PeiPei Auto Edit Video":
         "Activate license — PeiPei Auto Edit Video",
@@ -270,6 +283,7 @@ RULES = [
     (re.compile(r"^License: Thuê bao \| Hết hạn (.+) \(còn (\d+) ngày\)$"),
      "License: Subscription | Expires {0} ({1} days left)"),
     (re.compile(r"^License: Trọn đời(.*)$"), "License: Lifetime{0}"),
+    (re.compile(r"^License: (.+)$"), "License: {0}"),   # msg lỗi việt -> tra tiếp từ điển
     (re.compile(r"^Đã có phiên bản mới: (.+)$"), "New version available: {0}"),
     (re.compile(r"^Bạn đang dùng phiên bản mới nhất \((.+)\)\.$"),
      "You are on the latest version ({0})."),
@@ -327,7 +341,8 @@ _REV = {v: k for k, v in EN.items()}          # Anh -> Việt (đổi ngược k
 
 
 def tr(s):
-    """Dịch 1 chuỗi theo ngôn ngữ hiện tại. Không có bản dịch -> giữ nguyên."""
+    """Dịch 1 chuỗi theo ngôn ngữ hiện tại. Không có bản dịch -> giữ nguyên.
+    Nhóm bắt được trong RULES cũng được tra tiếp qua từ điển (vd 'License: <msg việt>')."""
     if not isinstance(s, str):
         return s
     if _lang == "en":
@@ -336,7 +351,7 @@ def tr(s):
         for rx, tpl in RULES:
             m = rx.match(s)
             if m:
-                return tpl.format(*m.groups())
+                return tpl.format(*(EN.get(g, g) for g in m.groups()))
         return s
     return _REV.get(s, s)                      # về vi: map ngược nếu đang là chuỗi Anh
 
