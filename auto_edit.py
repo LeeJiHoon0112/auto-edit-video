@@ -476,11 +476,12 @@ def build_clip_audio_track(scenes, tmp, clip_fit):
     theo ĐÚNG chế độ khớp video (cut/loop/speed — speed dùng atempo cho khỏi lệch hình);
     ảnh & clip câm -> khoảng LẶNG cùng độ dài. apad + -t để mỗi mảnh CHÍNH XÁC bằng cảnh
     (không trôi dồn). Trả về wav 48k stereo, hoặc None nếu không clip nào có tiếng."""
-    pieces, any_audio = [], False
+    pieces, any_audio, n_snd = [], False, 0
     for i, (src, d) in enumerate(scenes):
         out = os.path.join(tmp, f"aud_{i:04d}.wav")
         if src.lower().endswith(VIDEO_EXTS) and probe_has_audio(src):
             any_audio = True
+            n_snd += 1
             clip_len = probe_duration(src) or d
             mode, ratio = _clip_fit_mode(d, clip_len, clip_fit)
             af = "aresample=48000,aformat=channel_layouts=stereo,apad"
@@ -500,6 +501,7 @@ def build_clip_audio_track(scenes, tmp, clip_fit):
         pieces.append(out)
     if not any_audio:
         return None
+    print(tr(f"  → {n_snd}/{len(scenes)} cảnh có âm thanh gốc từ clip"))
     lst = os.path.join(tmp, "concat_aud.txt")
     with open(lst, "w", encoding="utf-8") as f:
         for p in pieces:
@@ -1118,6 +1120,24 @@ def main():
 
         logo = (os.path.abspath(args.logo)
                 if (args.logo and os.path.isfile(args.logo)) else None)
+        logo_ready = False              # logo đã scale + BO TRÒN GÓC sẵn (PNG tạm)?
+        if logo:
+            # BO TRÒN GÓC logo (bán kính ~20% chiều cao) cho watermark mềm mắt:
+            # scale + bo alpha 1 lần ra PNG tạm; logo có nền trong suốt sẵn thì góc
+            # vốn alpha=0 nên không đổi. Lỗi -> dùng logo gốc (vuông) như cũ.
+            _rnd = os.path.join(tmp, "logo_round.png")
+            try:
+                run([FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-i", logo,
+                     "-vf", "scale=-1:%d,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':"
+                            "b='b(X,Y)':a='alpha(X,Y)*clip(H/5-hypot("
+                            "max(max(H/5-X,X-W+1+H/5),0),"
+                            "max(max(H/5-Y,Y-H+1+H/5),0))+0.5,0,1)'"
+                            % max(24, args.logo_size),
+                     "-frames:v", "1", _rnd], timeout=120)
+                if os.path.isfile(_rnd):
+                    logo, logo_ready = _rnd, True
+            except SystemExit:
+                pass
         cmd = [FFMPEG, "-y", "-i", silent]
         aidx, nin = {}, 1                              # chỉ số input động
         if voice:

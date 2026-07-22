@@ -360,6 +360,8 @@ RULES = [
      "• Music: playlist of {0} tracks (joined by filename)"),
     (re.compile(r"^  ⚠️ Clip hỏng \(1 frame\): (.+) — đã dùng như ẢNH TĨNH \(Ken Burns\) thay thế$"),
      "  ⚠️ Broken clip (1 frame): {0} — used as a STILL IMAGE (Ken Burns) instead"),
+    (re.compile(r"^  → (\d+)/(\d+) cảnh có âm thanh gốc từ clip$"),
+     "  → {0}/{1} scene(s) have original clip audio"),
     # Video ngủ: FOLDER nhiều ảnh/clip
     (re.compile(r"^• Chế độ mục DÀI: (\d+) mục × ~(.+)s \(lặp đoạn (.+)s bằng COPY, chỉ encode (\d+) đoạn \+ (\d+) mối nối\)\.\.\.$"),
      "• LONG-item mode: {0} items × ~{1}s (looping a {2}s segment by COPY — only {3} segments + {4} junctions encoded)..."),

@@ -24,7 +24,9 @@ python -m pip install --upgrade nuitka requests cryptography certifi
 echo.
 
 echo [2/2] Build .exe (lan dau co the tai trinh bien dich vai phut)...
-python -m nuitka --standalone --onefile --enable-plugin=tk-inter --include-package=cryptography --include-package=certifi --windows-console-mode=disable --assume-yes-for-downloads --remove-output --output-dir=release --output-filename=AutoEditVideo.exe app.py
+REM Metadata company/product/version BAT BUOC: exe "vo danh" bi Defender AI bao nham
+REM Trojan:Win32/Sabsik!ml (false positive kinh dien cua Nuitka onefile)
+python -m nuitka --standalone --onefile --enable-plugin=tk-inter --include-package=cryptography --include-package=certifi --windows-console-mode=disable --assume-yes-for-downloads --remove-output --company-name="PeiPei Media" --product-name="PeiPei Auto Edit Video" --file-version=1.2.1.0 --product-version=1.2.1.0 --file-description="PeiPei Auto Edit Video - FFmpeg video editor" --copyright="Copyright (c) 2026 PeiPei Media" --output-dir=release --output-filename=AutoEditVideo.exe app.py
 echo.
 
 if exist "release\AutoEditVideo.exe" goto :done
