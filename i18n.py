@@ -123,6 +123,39 @@ EN = {
     "• Tách âm thanh gốc của clip (khớp từng cảnh)...":
         "• Extracting the clips' original audio (scene-aligned)...",
     "  (không clip nào có âm thanh — bỏ qua)": "  (no clip has audio — skipped)",
+    # ----- 1.2.0: hồ sơ kênh + thương hiệu + tiện ích -----
+    "📺 Hồ sơ kênh:": "📺 Channel profile:",
+    "💾 Lưu kênh...": "💾 Save channel...",
+    "(lưu/áp trọn bộ: khung hình, phụ đề, màu, nhạc, logo, intro...)":
+        "(saves/applies everything: aspect, subtitles, colors, music, logo, intro...)",
+    "Lưu hồ sơ kênh": "Save channel profile",
+    "Tên kênh (vd: Stickman, Quân sự...):": "Channel name (e.g. Stickman, Military...):",
+    "Thương hiệu kênh (tùy chọn — bỏ trống = như cũ)":
+        "Channel branding (optional — leave empty = same as before)",
+    "🖼 Logo/watermark:": "🖼 Logo/watermark:",
+    "Góc:": "Corner:",
+    "Độ mờ:": "Opacity:",
+    "🅣 Chèn TIÊU ĐỀ mở video (lấy từ ô 📌 Tiêu đề, chữ to + fade)":
+        "🅣 Show the video TITLE at the start (from 📌 Title, large text + fade)",
+    "giây:": "secs:",
+    "🎬 Intro:": "🎬 Intro:",
+    "Outro:": "Outro:",
+    "💥 SFX chuyển cảnh:": "💥 Transition SFX:",
+    "📑 Chapters": "📑 Chapters",
+    "🖼 Frame thumbnail": "🖼 Thumbnail frames",
+    "Chưa thấy file bảng cảnh (scenes.csv).": "Scene table (scenes.csv) not found.",
+    "Không đọc được bảng cảnh.": "Could not read the scene table.",
+    "Chưa thấy file video xuất — render trước đã.":
+        "Output video not found — render first.",
+    "Video quá ngắn / không đọc được.": "Video too short / unreadable.",
+    "Đã trích 6 frame thumbnail.": "Extracted 6 thumbnail frames.",
+    "đang ghép bản cuối...": "assembling final pass...",
+    "• Dựng track SFX chuyển cảnh...": "• Building the transition SFX track...",
+    "• Ghép intro/outro vào video...": "• Attaching intro/outro...",
+    "  (concat copy lệch — re-encode lại toàn bộ cho chắc)":
+        "  (copy concat mismatched — re-encoding the whole thing to be safe)",
+    "  (folder nhạc nền không có file audio nào — bỏ qua nhạc)":
+        "  (no audio files in the music folder — skipping music)",
     "Âm lượng:": "Volume:",
     "Tự hạ nhạc khi có lời": "Auto-duck music under voice",
     "▶  RENDER VIDEO": "▶  RENDER VIDEO",
@@ -317,6 +350,16 @@ RULES = [
      "Enter an API key for '{0}' in the Settings tab first."),
     (re.compile(r"^Vào Cài đặt nhập key cho '(.+)'\.$"),
      "Enter a key for '{0}' in Settings."),
+    # 1.2.0
+    (re.compile(r"^Đã áp hồ sơ kênh '(.+)'\.$"), "Applied channel profile '{0}'."),
+    (re.compile(r"^Đã lưu hồ sơ kênh '(.+)'\.$"), "Saved channel profile '{0}'."),
+    (re.compile(r"^Xoá hồ sơ kênh '(.+)'\?$"), "Delete channel profile '{0}'?"),
+    (re.compile(r"^Đã xuất chapters: (.+)$"), "Chapters exported: {0}"),
+    (re.compile(r"^còn ~(\d+)p(\d+)s$"), "~{0}m{1}s left"),
+    (re.compile(r"^• Nhạc nền: playlist (\d+) bài \(nối theo tên file\)$"),
+     "• Music: playlist of {0} tracks (joined by filename)"),
+    (re.compile(r"^  ⚠️ Clip hỏng \(1 frame\): (.+) — đã dùng như ẢNH TĨNH \(Ken Burns\) thay thế$"),
+     "  ⚠️ Broken clip (1 frame): {0} — used as a STILL IMAGE (Ken Burns) instead"),
     # Video ngủ: FOLDER nhiều ảnh/clip
     (re.compile(r"^• Chế độ mục DÀI: (\d+) mục × ~(.+)s \(lặp đoạn (.+)s bằng COPY, chỉ encode (\d+) đoạn \+ (\d+) mối nối\)\.\.\.$"),
      "• LONG-item mode: {0} items × ~{1}s (looping a {2}s segment by COPY — only {3} segments + {4} junctions encoded)..."),

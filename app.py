@@ -51,6 +51,17 @@ def default_config():
         "aspect": "16:9",                           # khung hình render: 16:9 | 9:16
         "clip_audio": False,                        # giữ âm thanh gốc của clip
         "clip_volume": "0.25",
+        "logo": "",                                 # thương hiệu: watermark + tiêu đề + i/o + sfx
+        "logo_pos": "br",
+        "logo_opacity": "0.85",
+        "title_on": False,
+        "title_sec": "4",
+        "intro": "",
+        "outro": "",
+        "sfx": "",
+        "sfx_volume": "0.5",
+        "channels": {},                             # hồ sơ KÊNH: {tên: snapshot cài đặt}
+        "active_channel": "",
         "kara_color": "#FFFF00",
         "sub_font": "Arial Black",
         "sub_mode": "word",
@@ -271,6 +282,17 @@ class App:
         self.grain = tk.BooleanVar(value=False)
         self.clip_audio = tk.BooleanVar(value=bool(self.cfg.get("clip_audio", False)))
         self.clip_volume = tk.StringVar(value=str(self.cfg.get("clip_volume", "0.25")))
+        # Thương hiệu kênh: logo/watermark + tiêu đề mở video + intro/outro + SFX
+        self.logo = tk.StringVar(value=self.cfg.get("logo", ""))
+        self.logo_pos = tk.StringVar(value=self.cfg.get("logo_pos", "br"))
+        self.logo_opacity = tk.StringVar(value=str(self.cfg.get("logo_opacity", "0.85")))
+        self.title_on = tk.BooleanVar(value=bool(self.cfg.get("title_on", False)))
+        self.title_sec = tk.StringVar(value=str(self.cfg.get("title_sec", "4")))
+        self.intro = tk.StringVar(value=self.cfg.get("intro", ""))
+        self.outro = tk.StringVar(value=self.cfg.get("outro", ""))
+        self.sfx = tk.StringVar(value=self.cfg.get("sfx", ""))
+        self.sfx_volume = tk.StringVar(value=str(self.cfg.get("sfx_volume", "0.5")))
+        self.channel_var = tk.StringVar(value=self.cfg.get("active_channel", ""))
         self.bgm = tk.StringVar(value="")              # file nhạc nền (#4)
         self.bgm_volume = tk.StringVar(value="0.18")
         self.duck = tk.BooleanVar(value=True)          # tự hạ nhạc khi có lời (ducking)
@@ -336,6 +358,16 @@ class App:
             self._side_btns[name] = b
 
         # Log + status (dùng chung)
+        # Thanh TIẾN ĐỘ render + ước tính thời gian còn lại (đọc từ log engine)
+        prow = ttk.Frame(root)
+        prow.pack(fill="x", padx=6, pady=(0, 2))
+        self.pbar = ttk.Progressbar(prow, maximum=100)
+        self.pbar.pack(side="left", fill="x", expand=True)
+        self.eta_var = tk.StringVar(value="")
+        ttk.Label(prow, textvariable=self.eta_var, width=24,
+                  anchor="e").pack(side="left", padx=(6, 0))
+        self._prog_t0 = None
+
         box = ttk.LabelFrame(root, text="Nhật ký")
         box.pack(fill="both", expand=False, padx=6, pady=(0, 4))
         self.log = tk.Text(box, height=8, wrap="word", bg="#1e1e1e",
@@ -654,6 +686,23 @@ class App:
 
     # ============================ TRANG RENDER ============================
     def _build_render(self, parent):
+        # ---- HỒ SƠ KÊNH: 1 click áp trọn bộ cài đặt (style, sub, khung hình, nhạc...) ----
+        chrow = ttk.Frame(parent)
+        chrow.pack(fill="x", padx=8, pady=(6, 0))
+        ttk.Label(chrow, text="📺 Hồ sơ kênh:").pack(side="left")
+        self.cmb_channel = ttk.Combobox(chrow, textvariable=self.channel_var,
+                                        state="readonly", width=22,
+                                        values=list(self.cfg.get("channels", {}).keys()))
+        self.cmb_channel.pack(side="left", padx=6)
+        self.cmb_channel.bind("<<ComboboxSelected>>", self._on_channel_pick)
+        ttk.Button(chrow, text="💾 Lưu kênh...", width=12,
+                   command=self._channel_save_as).pack(side="left", padx=2)
+        ttk.Button(chrow, text="🗑", width=3,
+                   command=self._channel_delete).pack(side="left")
+        ttk.Label(chrow, foreground="#888",
+                  text="(lưu/áp trọn bộ: khung hình, phụ đề, màu, nhạc, logo, intro...)"
+                  ).pack(side="left", padx=8)
+
         f1 = ttk.LabelFrame(parent, text="Nguyên liệu")
         f1.pack(fill="x", padx=8, pady=6)
         self._row(f1, "File PHỤ ĐỀ (SRT):", self.srt, lambda: self._pick_file(
@@ -762,8 +811,11 @@ class App:
         line3 = ttk.Frame(f2)
         line3.pack(fill="x", padx=10, pady=(0, 8))
         ttk.Label(line3, text="🎵 Nhạc nền:").pack(side="left")
-        ttk.Entry(line3, textvariable=self.bgm, width=34).pack(side="left", padx=(2, 4))
+        ttk.Entry(line3, textvariable=self.bgm, width=28).pack(side="left", padx=(2, 4))
         ttk.Button(line3, text="Chọn...", width=8, command=self._pick_bgm).pack(side="left")
+        # FOLDER nhạc -> playlist nhiều bài tự nối (video dài không lặp mãi 1 bài)
+        ttk.Button(line3, text="📁", width=3,
+                   command=lambda: self._pick_dir(self.bgm)).pack(side="left", padx=2)
         ttk.Label(line3, text="Âm lượng:").pack(side="left", padx=(12, 2))
         ttk.Spinbox(line3, from_=0.0, to=1.0, increment=0.02, width=5,
                     textvariable=self.bgm_volume).pack(side="left")
@@ -780,6 +832,50 @@ class App:
         ttk.Spinbox(line3b, from_=0.0, to=1.0, increment=0.05, width=5,
                     textvariable=self.clip_volume).pack(side="left")
 
+        # ---- THƯƠNG HIỆU: logo + tiêu đề mở video + intro/outro + SFX chuyển cảnh ----
+        fb = ttk.LabelFrame(parent, text="Thương hiệu kênh (tùy chọn — bỏ trống = như cũ)")
+        fb.pack(fill="x", padx=8, pady=(0, 6))
+        rb1 = ttk.Frame(fb)
+        rb1.pack(fill="x", padx=10, pady=(6, 2))
+        ttk.Label(rb1, text="🖼 Logo/watermark:").pack(side="left")
+        ttk.Entry(rb1, textvariable=self.logo, width=26).pack(side="left", padx=(2, 4))
+        ttk.Button(rb1, text="Chọn...", width=8, command=lambda: self._pick_file(
+            self.logo, [("Ảnh PNG", "*.png"), ("Ảnh", "*.png *.jpg *.jpeg *.webp"),
+                        ("Tất cả", "*.*")])).pack(side="left")
+        ttk.Label(rb1, text="Góc:").pack(side="left", padx=(10, 2))
+        ttk.Combobox(rb1, width=4, state="readonly", textvariable=self.logo_pos,
+                     values=["br", "bl", "tr", "tl"]).pack(side="left")
+        ttk.Label(rb1, text="Độ mờ:").pack(side="left", padx=(10, 2))
+        ttk.Spinbox(rb1, from_=0.1, to=1.0, increment=0.05, width=5,
+                    textvariable=self.logo_opacity).pack(side="left")
+        rb2 = ttk.Frame(fb)
+        rb2.pack(fill="x", padx=10, pady=2)
+        ttk.Checkbutton(rb2, text="🅣 Chèn TIÊU ĐỀ mở video (lấy từ ô 📌 Tiêu đề, chữ to + fade)",
+                        variable=self.title_on,
+                        command=self._save_brand).pack(side="left")
+        ttk.Label(rb2, text="giây:").pack(side="left", padx=(10, 2))
+        ttk.Spinbox(rb2, from_=2, to=15, width=4,
+                    textvariable=self.title_sec).pack(side="left")
+        rb3 = ttk.Frame(fb)
+        rb3.pack(fill="x", padx=10, pady=2)
+        ttk.Label(rb3, text="🎬 Intro:").pack(side="left")
+        ttk.Entry(rb3, textvariable=self.intro, width=22).pack(side="left", padx=(2, 2))
+        ttk.Button(rb3, text="Chọn...", width=8, command=lambda: self._pick_file(
+            self.intro, [("Video", "*.mp4 *.mov *.mkv"), ("Tất cả", "*.*")])).pack(side="left")
+        ttk.Label(rb3, text="Outro:").pack(side="left", padx=(12, 2))
+        ttk.Entry(rb3, textvariable=self.outro, width=22).pack(side="left", padx=(0, 2))
+        ttk.Button(rb3, text="Chọn...", width=8, command=lambda: self._pick_file(
+            self.outro, [("Video", "*.mp4 *.mov *.mkv"), ("Tất cả", "*.*")])).pack(side="left")
+        rb4 = ttk.Frame(fb)
+        rb4.pack(fill="x", padx=10, pady=(2, 6))
+        ttk.Label(rb4, text="💥 SFX chuyển cảnh:").pack(side="left")
+        ttk.Entry(rb4, textvariable=self.sfx, width=26).pack(side="left", padx=(2, 2))
+        ttk.Button(rb4, text="Chọn...", width=8, command=lambda: self._pick_file(
+            self.sfx, [("Audio", "*.mp3 *.wav *.m4a *.ogg"), ("Tất cả", "*.*")])).pack(side="left")
+        ttk.Label(rb4, text="Âm lượng:").pack(side="left", padx=(10, 2))
+        ttk.Spinbox(rb4, from_=0.0, to=1.0, increment=0.05, width=5,
+                    textvariable=self.sfx_volume).pack(side="left")
+
         bar = ttk.Frame(parent)
         bar.pack(fill="x", padx=8, pady=8)
         self.btn_render = ttk.Button(bar, text="▶  RENDER VIDEO", command=self.run_render)
@@ -793,6 +889,10 @@ class App:
         self.btn_qc.pack(side="left", padx=4)
         ttk.Button(bar, text="📂 Mở thư mục xuất",
                    command=self.open_out).pack(side="right", padx=4)
+        ttk.Button(bar, text="🖼 Frame thumbnail",
+                   command=self._export_thumb_frames).pack(side="right", padx=2)
+        ttk.Button(bar, text="📑 Chapters",
+                   command=self._export_chapters).pack(side="right", padx=2)
 
         ttk.Label(parent, wraplength=640, foreground="#555",
                   text="Đặt clip Veo tên 01,02,... trong thư mục clip. Render dùng scenes.csv "
@@ -1330,6 +1430,10 @@ class App:
 
     # ---------- log/queue ----------
     def _busy(self, on):
+        if on:                                   # bắt đầu việc mới -> reset thanh tiến độ
+            self.pbar["value"] = 0
+            self.eta_var.set("")
+            self._prog_t0 = None
         st = "disabled" if on else "normal"
         self.btn_prompt["state"] = st
         self.btn_render["state"] = st
@@ -1348,6 +1452,10 @@ class App:
                 kind, data = self.q.get_nowait()
                 if kind == "line":
                     self._log(data)
+                    try:
+                        self._progress_line(data)
+                    except Exception:  # noqa — tiến độ chỉ là trang trí, không được chặn log
+                        pass
                 elif kind == "apiresult":
                     ok, msg = data
                     self._log(("✓ " if ok else "✗ ") + msg + "\n")
@@ -1769,6 +1877,200 @@ class App:
         self.cfg["aspect"] = self.aspect.get()
         save_config(self.cfg)
 
+    def _save_brand(self):
+        """Lưu nhóm cài đặt THƯƠNG HIỆU (logo/tiêu đề/intro-outro/sfx) vào config."""
+        for k, v in (("logo", self.logo.get().strip()),
+                     ("logo_pos", self.logo_pos.get()),
+                     ("logo_opacity", self.logo_opacity.get().strip()),
+                     ("title_on", bool(self.title_on.get())),
+                     ("title_sec", self.title_sec.get().strip()),
+                     ("intro", self.intro.get().strip()),
+                     ("outro", self.outro.get().strip()),
+                     ("sfx", self.sfx.get().strip()),
+                     ("sfx_volume", self.sfx_volume.get().strip())):
+            self.cfg[k] = v
+        save_config(self.cfg)
+
+    # ---------- HỒ SƠ KÊNH: lưu/áp trọn bộ cài đặt cho từng kênh ----------
+    _CHANNEL_KEYS = ("aspect", "sub_font", "sub_mode", "sub_outline", "kara_color",
+                     "clip_audio", "clip_volume", "logo", "logo_pos", "logo_opacity",
+                     "title_on", "title_sec", "intro", "outro", "sfx", "sfx_volume",
+                     "bgm", "bgm_volume", "duck", "transition", "crossfade", "kenburns",
+                     "color", "vignette", "grain", "active_profile", "main_character")
+
+    def _channel_snapshot(self):
+        return {
+            "aspect": self.aspect.get(), "sub_font": self.sub_font.get(),
+            "sub_mode": self.sub_mode.get(), "sub_outline": self.sub_outline.get(),
+            "kara_color": self.kara_color.get(),
+            "clip_audio": bool(self.clip_audio.get()),
+            "clip_volume": self.clip_volume.get(),
+            "logo": self.logo.get(), "logo_pos": self.logo_pos.get(),
+            "logo_opacity": self.logo_opacity.get(),
+            "title_on": bool(self.title_on.get()), "title_sec": self.title_sec.get(),
+            "intro": self.intro.get(), "outro": self.outro.get(),
+            "sfx": self.sfx.get(), "sfx_volume": self.sfx_volume.get(),
+            "bgm": self.bgm.get(), "bgm_volume": self.bgm_volume.get(),
+            "duck": bool(self.duck.get()), "transition": self.transition.get(),
+            "crossfade": bool(self.crossfade.get()),
+            "kenburns": bool(self.kenburns.get()), "color": self.color.get(),
+            "vignette": bool(self.vignette.get()), "grain": bool(self.grain.get()),
+            "active_profile": self.profile_var.get(),
+            "main_character": self.main_char.get(),
+        }
+
+    def _channel_apply(self, d):
+        self.aspect.set(d.get("aspect", "16:9"))
+        self.sub_font.set(d.get("sub_font", "Arial Black"))
+        self.sub_mode.set(d.get("sub_mode", "word"))
+        self.sub_outline.set(d.get("sub_outline", "#000000"))
+        self.kara_color.set(d.get("kara_color", "#FFFF00"))
+        self.clip_audio.set(bool(d.get("clip_audio", False)))
+        self.clip_volume.set(str(d.get("clip_volume", "0.25")))
+        self.logo.set(d.get("logo", "")); self.logo_pos.set(d.get("logo_pos", "br"))
+        self.logo_opacity.set(str(d.get("logo_opacity", "0.85")))
+        self.title_on.set(bool(d.get("title_on", False)))
+        self.title_sec.set(str(d.get("title_sec", "4")))
+        self.intro.set(d.get("intro", "")); self.outro.set(d.get("outro", ""))
+        self.sfx.set(d.get("sfx", "")); self.sfx_volume.set(str(d.get("sfx_volume", "0.5")))
+        self.bgm.set(d.get("bgm", "")); self.bgm_volume.set(str(d.get("bgm_volume", "0.18")))
+        self.duck.set(bool(d.get("duck", True)))
+        self.transition.set(d.get("transition", "fade"))
+        self.crossfade.set(bool(d.get("crossfade", False)))
+        self.kenburns.set(bool(d.get("kenburns", True)))
+        self.color.set(d.get("color", "none"))
+        self.vignette.set(bool(d.get("vignette", False)))
+        self.grain.set(bool(d.get("grain", False)))
+        if d.get("active_profile") in self.cfg.get("profiles", {}):
+            self.profile_var.set(d["active_profile"])
+            self.cfg["active_profile"] = d["active_profile"]
+        self.main_char.set(d.get("main_character", ""))
+        # đồng bộ ô màu + lưu các nhóm
+        self.kara_swatch.config(bg=self._safe_bg(self.kara_color.get()))
+        self.outline_swatch.config(bg=self._safe_bg(self.sub_outline.get()))
+        self._save_subopts(); self._save_aspect(); self._save_clip_audio()
+        self._save_brand()
+
+    def _on_channel_pick(self, _e=None):
+        name = self.channel_var.get()
+        d = self.cfg.get("channels", {}).get(name)
+        if not d:
+            return
+        self._channel_apply(d)
+        self.cfg["active_channel"] = name
+        save_config(self.cfg)
+        self.status.set(tr(f"Đã áp hồ sơ kênh '{name}'."))
+
+    def _channel_save_as(self):
+        name = simpledialog.askstring(tr("Lưu hồ sơ kênh"),
+                                      tr("Tên kênh (vd: Stickman, Quân sự...):"),
+                                      initialvalue=self.channel_var.get() or "")
+        if not name or not name.strip():
+            return
+        name = name.strip()
+        self.cfg.setdefault("channels", {})[name] = self._channel_snapshot()
+        self.cfg["active_channel"] = name
+        save_config(self.cfg)
+        self.channel_var.set(name)
+        self.cmb_channel["values"] = list(self.cfg["channels"].keys())
+        self.status.set(tr(f"Đã lưu hồ sơ kênh '{name}'."))
+
+    def _channel_delete(self):
+        name = self.channel_var.get()
+        if not name or name not in self.cfg.get("channels", {}):
+            return
+        if not messagebox.askyesno(tr("Xoá"), tr(f"Xoá hồ sơ kênh '{name}'?")):
+            return
+        self.cfg["channels"].pop(name, None)
+        self.cfg["active_channel"] = ""
+        save_config(self.cfg)
+        self.channel_var.set("")
+        self.cmb_channel["values"] = list(self.cfg["channels"].keys())
+
+    # ---------- Chapters + frame thumbnail ----------
+    def _export_chapters(self):
+        """scenes.csv -> chapters.txt kiểu YouTube (m:ss + câu đầu cảnh) cạnh file xuất."""
+        import csv as _csv
+        import re as _re
+        sc = self._scenes_path()
+        if not (sc and os.path.isfile(sc)):
+            messagebox.showwarning(tr("Thiếu"), tr("Chưa thấy file bảng cảnh (scenes.csv)."))
+            return
+        rows = []
+        with open(sc, encoding="utf-8-sig", newline="") as f:
+            for r in _csv.reader(f):
+                if len(r) >= 7 and r[0].strip().isdigit():
+                    m = _re.findall(r"\d+", r[1])
+                    if len(m) >= 3:
+                        secs = int(m[0]) * 3600 + int(m[1]) * 60 + int(m[2])
+                        rows.append((secs, " ".join(r[6].split())[:60]))
+        if not rows:
+            messagebox.showwarning(tr("Lỗi"), tr("Không đọc được bảng cảnh."))
+            return
+        out = os.path.splitext(self.out.get().strip() or dflt("output", "final.mp4"))[0] \
+            + "_chapters.txt"
+        with open(out, "w", encoding="utf-8") as f:
+            for secs, txt in rows:
+                f.write(f"{secs // 60}:{secs % 60:02d} {txt}\n")
+        self.status.set(tr(f"Đã xuất chapters: {os.path.basename(out)}"))
+        try:
+            os.startfile(out)
+        except OSError:
+            pass
+
+    def _export_thumb_frames(self):
+        """Trích 6 frame rải đều từ video đã render -> làm nền thumbnail."""
+        out = (self.out.get() or "").strip()
+        if not os.path.isfile(out):
+            messagebox.showwarning(tr("Thiếu"), tr("Chưa thấy file video xuất — render trước đã."))
+            return
+        import auto_edit as ae
+        dur = ae.probe_duration(out) or 0
+        if dur < 2:
+            messagebox.showwarning(tr("Lỗi"), tr("Video quá ngắn / không đọc được."))
+            return
+        folder = os.path.splitext(out)[0] + "_thumbs"
+        os.makedirs(folder, exist_ok=True)
+        for i in range(6):
+            t = dur * (i + 0.5) / 6
+            subprocess.run([ae.FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
+                            "-ss", f"{t:.2f}", "-i", out, "-frames:v", "1",
+                            os.path.join(folder, f"thumb_{i + 1}.jpg")],
+                           creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+        self.status.set(tr("Đã trích 6 frame thumbnail."))
+        try:
+            os.startfile(folder)
+        except OSError:
+            pass
+
+    # ---------- Thanh tiến độ: đọc log engine -> % + ETA ----------
+    def _progress_line(self, s):
+        import re as _re
+        import time as _time
+        m = _re.search(r"\[(\d+)/(\d+)\]", s)
+        if m:
+            done, total = int(m.group(1)), int(m.group(2))
+            if self._prog_t0 is None:
+                self._prog_t0 = _time.time()
+            if total > 0 and done > 0:
+                self.pbar["value"] = min(88.0, done * 88.0 / total)
+                left = (_time.time() - self._prog_t0) / done * (total - done)
+                self.eta_var.set(tr(f"còn ~{int(left // 60)}p{int(left % 60):02d}s")
+                                 if left > 3 else "")
+            return
+        if "(1/2)" in s:
+            self.pbar["value"] = 25
+        elif "(2/2)" in s:
+            self.pbar["value"] = 70
+        elif "bản cuối" in s or "final pass" in s:
+            self.pbar["value"] = 92
+            self.eta_var.set(tr("đang ghép bản cuối..."))
+        elif "intro/outro" in s:
+            self.pbar["value"] = 96
+        elif "✅" in s:
+            self.pbar["value"] = 100
+            self.eta_var.set("")
+
     def _save_clip_audio(self):
         self.cfg["clip_audio"] = bool(self.clip_audio.get())
         self.cfg["clip_volume"] = self.clip_volume.get().strip()
@@ -1792,6 +2094,12 @@ class App:
             "kenburns": self.kenburns.get(), "subs": self.subs.get(),
             "aspect": self.aspect.get(),
             "clip_audio": self.clip_audio.get(), "clip_volume": self.clip_volume.get(),
+            "logo": self.logo.get(), "logo_pos": self.logo_pos.get(),
+            "logo_opacity": self.logo_opacity.get(),
+            "title_on": self.title_on.get(), "title_sec": self.title_sec.get(),
+            "title_text": self.video_title.get(),
+            "intro": self.intro.get(), "outro": self.outro.get(),
+            "sfx": self.sfx.get(), "sfx_volume": self.sfx_volume.get(),
             "crossfade": self.crossfade.get(), "transition": self.transition.get(),
             "color": self.color.get(), "vignette": self.vignette.get(),
             "grain": self.grain.get(), "bgm": self.bgm.get(),
@@ -1819,6 +2127,20 @@ class App:
             except (TypeError, ValueError):
                 cv = 0.25
             cmd += ["--keep-clip-audio", "--clip-volume", f"{min(max(cv, 0.0), 1.0):g}"]
+        lg = (job.get("logo") or "").strip()           # thương hiệu: logo + tiêu đề + i/o + sfx
+        if lg and os.path.isfile(lg):
+            cmd += ["--logo", lg, "--logo-pos", job.get("logo_pos") or "br",
+                    "--logo-opacity", str(job.get("logo_opacity") or "0.85")]
+        if job.get("title_on") and (job.get("title_text") or "").strip():
+            cmd += ["--title-text", job["title_text"].strip(),
+                    "--title-sec", str(job.get("title_sec") or "4")]
+        for k, flag in (("intro", "--intro"), ("outro", "--outro")):
+            p = (job.get(k) or "").strip()
+            if p and os.path.isfile(p):
+                cmd += [flag, p]
+        sf = (job.get("sfx") or "").strip()
+        if sf and os.path.isfile(sf):
+            cmd += ["--sfx", sf, "--sfx-volume", str(job.get("sfx_volume") or "0.5")]
         if not job.get("kenburns", True):
             cmd += ["--no-kenburns"]
         if not job.get("subs", True):
@@ -1845,7 +2167,7 @@ class App:
         if job.get("grain"):
             cmd += ["--grain"]
         bgm = (job.get("bgm") or "").strip()
-        if bgm and os.path.isfile(bgm):
+        if bgm and (os.path.isfile(bgm) or os.path.isdir(bgm)):   # file đơn hoặc FOLDER playlist
             try:
                 bv = float(job.get("bgm_volume", "0.18"))
             except (TypeError, ValueError):

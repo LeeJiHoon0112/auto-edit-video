@@ -510,8 +510,138 @@ def build_clip_audio_track(scenes, tmp, clip_fit):
     return outw
 
 
+def build_sfx_track(scenes, tmp, sfx, volume=0.5):
+    """Track SFX CHUYỂN CẢNH: phát file sfx ở ĐẦU mỗi cảnh (trừ cảnh 1), khớp timeline
+    như build_clip_audio_track. Mỗi mảnh = sfx (pad lặng) đúng độ dài cảnh."""
+    pieces = []
+    for i, (_src, d) in enumerate(scenes):
+        out = os.path.join(tmp, f"sfx_{i:04d}.wav")
+        if i == 0:
+            cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+                   "-i", "anullsrc=r=48000:cl=stereo", "-t", f"{d:.3f}",
+                   "-c:a", "pcm_s16le", out]
+        else:
+            cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-i", sfx, "-vn",
+                   "-af", f"volume={max(0.0, min(2.0, volume)):.3f},"
+                          f"aresample=48000,aformat=channel_layouts=stereo,apad",
+                   "-t", f"{d:.3f}", "-c:a", "pcm_s16le", out]
+        run(cmd, timeout=SCENE_TIMEOUT)
+        pieces.append(out)
+    lst = os.path.join(tmp, "concat_sfx.txt")
+    with open(lst, "w", encoding="utf-8") as f:
+        for p in pieces:
+            f.write("file '" + p.replace("\\", "/") + "'\n")
+    outw = os.path.join(tmp, "sfx_track.wav")
+    run([FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-f", "concat", "-safe", "0",
+         "-i", lst, "-c:a", "pcm_s16le", outw])
+    return outw
+
+
+AUDIO_EXTS = (".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac")
+
+
+def build_bgm_playlist(folder, tmp):
+    """FOLDER nhạc nền -> nối các bài (theo tên file) thành 1 track wav — video dài không
+    bị lặp mãi 1 bài. Chuẩn hóa từng bài 48k stereo rồi concat copy."""
+    files = sorted(f for f in os.listdir(folder) if f.lower().endswith(AUDIO_EXTS))
+    if not files:
+        print(tr(f"  (folder nhạc nền không có file audio nào — bỏ qua nhạc)"))
+        return None
+    pieces = []
+    for i, f in enumerate(files):
+        out = os.path.join(tmp, f"bgm_{i:03d}.wav")
+        run([FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
+             "-i", os.path.join(folder, f), "-vn",
+             "-af", "aresample=48000,aformat=channel_layouts=stereo",
+             "-c:a", "pcm_s16le", out], timeout=600)
+        pieces.append(out)
+    print(tr(f"• Nhạc nền: playlist {len(pieces)} bài (nối theo tên file)"))
+    lst = os.path.join(tmp, "concat_bgm.txt")
+    with open(lst, "w", encoding="utf-8") as f:
+        for p in pieces:
+            f.write("file '" + p.replace("\\", "/") + "'\n")
+    outw = os.path.join(tmp, "bgm_playlist.wav")
+    run([FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-f", "concat", "-safe", "0",
+         "-i", lst, "-c:a", "pcm_s16le", outw])
+    return outw
+
+
+def _attach_intro_outro(main_path, intro, outro, tmp):
+    """Ghép intro/outro kênh vào đầu/cuối video ĐÃ render: chuẩn hóa intro/outro về đúng
+    khung/fps/audio rồi concat COPY (không re-encode video chính). Concat lỗi/lệch thời
+    lượng -> fallback re-encode toàn bộ (chậm nhưng chắc)."""
+    parts = []
+    for tag, p in (("intro", intro), ("outro", outro)):
+        if p and os.path.isfile(p):
+            n = os.path.join(tmp, f"{tag}_norm.mp4")
+            has_a = probe_has_audio(p)
+            cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
+                   "-i", os.path.abspath(p)]
+            if not has_a:
+                cmd += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
+            cmd += ["-vf", f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase,"
+                           f"crop={WIDTH}:{HEIGHT},fps={FPS},setsar=1,format=yuv420p"]
+            if not has_a:
+                cmd += ["-map", "0:v:0", "-map", "1:a:0", "-shortest"]
+            cmd += (["-ar", "48000", "-ac", "2", "-c:a", "aac", "-b:a", "192k"]
+                    + enc_args() + ["-pix_fmt", "yuv420p", n])
+            run(cmd, timeout=600)
+            parts.append((tag, n))
+    if not parts:
+        return
+    main_tmp = os.path.join(tmp, "main_part.mp4")
+    shutil.move(main_path, main_tmp)
+    seq = ([n for t, n in parts if t == "intro"] + [main_tmp]
+           + [n for t, n in parts if t == "outro"])
+    want = sum(probe_duration(p) or 0 for p in seq)
+    lst = os.path.join(tmp, "concat_io.txt")
+    with open(lst, "w", encoding="utf-8") as f:
+        for p in seq:
+            f.write("file '" + p.replace("\\", "/") + "'\n")
+    try:
+        run([FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-f", "concat",
+             "-safe", "0", "-i", lst, "-c", "copy", main_path], timeout=600)
+    except SystemExit:
+        pass
+    got = probe_duration(main_path) or 0
+    if abs(got - want) > 1.5:            # copy-concat hỏng (codec lệch) -> re-encode chắc ăn
+        print(tr("  (concat copy lệch — re-encode lại toàn bộ cho chắc)"))
+        fc = "".join(f"[{i}:v][{i}:a]" for i in range(len(seq)))
+        fc += f"concat=n={len(seq)}:v=1:a=1[v][a]"
+        cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "error"]
+        for p in seq:
+            cmd += ["-i", p]
+        cmd += (["-filter_complex", fc, "-map", "[v]", "-map", "[a]"]
+                + enc_args() + ["-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+                                main_path])
+        run(cmd, timeout=1800)
+
+
+def _write_title_ass(path, width, height, text, seconds=4.0, font=None):
+    """File ASS riêng cho TIÊU ĐỀ MỞ VIDEO: chữ lớn giữa 1/3 trên màn hình, fade in/out.
+    Dùng ASS thay drawtext để khỏi vướng escape đường dẫn font trên Windows."""
+    size = int(height * 0.075)
+    style = (f"Style: T,{font or SUB_FONT},{size},&H00FFFFFF,&H00FFFFFF,&H00000000,"
+             f"&H80000000,-1,0,0,0,100,100,0,0,1,{max(3, size // 14)},2,8,60,60,"
+             f"{int(height * 0.18)},1")
+    txt = " ".join(str(text).split()).replace("{", "(").replace("}", ")")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("[Script Info]\nScriptType: v4.00+\nWrapStyle: 0\n"
+                f"PlayResX: {width}\nPlayResY: {height}\nScaledBorderAndShadow: yes\n\n"
+                "[V4+ Styles]\n"
+                "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
+                "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, "
+                "ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, "
+                "MarginL, MarginR, MarginV, Encoding\n" + style + "\n\n"
+                "[Events]\n"
+                "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, "
+                "Effect, Text\n"
+                f"Dialogue: 1,0:00:00.00,{_ass_time(max(1.0, seconds))},T,,0,0,0,,"
+                f"{{\\fad(500,500)}}{txt}\n")
+
+
 def build_clip(media, duration, out_path, kenburns=True, index=0, clip_fit="auto",
-               edge_fade=True):
+               edge_fade=True, clip_fade=False):
     frames = max(1, round(duration * FPS))
     is_video = media.lower().endswith(VIDEO_EXTS)
 
@@ -522,15 +652,22 @@ def build_clip(media, duration, out_path, kenburns=True, index=0, clip_fit="auto
                 f"crop={WIDTH}:{HEIGHT},setsar=1")
         mode, ratio = _clip_fit_mode(duration, clip_len, clip_fit)
 
+        # Bật chuyển cảnh -> CLIP cũng fade mềm 0.25s ở 2 mép (qua đen) — trước đây
+        # transition chỉ áp giữa các ẢNH, chuỗi clip nối nhau bị cắt khựng
+        fd = ""
+        if clip_fade and duration > 1.0:
+            fd = (f",fade=t=in:st=0:d=0.25"
+                  f",fade=t=out:st={duration - 0.25:.3f}:d=0.25")
+
         if mode == "speed":
-            vf = f"setpts={ratio:.4f}*PTS,{base},fps={FPS},format=yuv420p"
+            vf = f"setpts={ratio:.4f}*PTS,{base},fps={FPS}{fd},format=yuv420p"
             cmd = [FFMPEG, "-y", "-an", "-i", media, "-vf", vf, "-t", f"{duration:.3f}"]
         elif mode == "loop":
-            vf = f"{base},fps={FPS},format=yuv420p"
+            vf = f"{base},fps={FPS}{fd},format=yuv420p"
             cmd = [FFMPEG, "-y", "-an", "-stream_loop", "-1", "-i", media,
                    "-t", f"{duration:.3f}", "-vf", vf]
         else:  # cut
-            vf = f"{base},fps={FPS},format=yuv420p"
+            vf = f"{base},fps={FPS}{fd},format=yuv420p"
             cmd = [FFMPEG, "-y", "-an", "-i", media, "-t", f"{duration:.3f}", "-vf", vf]
         cmd += enc_args() + ["-pix_fmt", "yuv420p", out_path]
         run(cmd, timeout=SCENE_TIMEOUT)
@@ -695,6 +832,23 @@ def main():
     ap.add_argument("--aspect", choices=["16:9", "9:16"], default="16:9",
                     help="Khung hình video: 16:9 ngang 1920x1080 (mặc định, YouTube) | "
                          "9:16 dọc 1080x1920 (Shorts/TikTok/Reels)")
+    ap.add_argument("--logo", default=None, help="File logo/watermark PNG (nên nền trong suốt)")
+    ap.add_argument("--logo-pos", choices=["tl", "tr", "bl", "br"], default="br",
+                    help="Góc đặt logo: tl/tr/bl/br (mặc định br = phải-dưới)")
+    ap.add_argument("--logo-size", type=int, default=96,
+                    help="Chiều cao logo (px, mặc định 96)")
+    ap.add_argument("--logo-opacity", type=float, default=0.85,
+                    help="Độ mờ logo 0-1 (mặc định 0.85)")
+    ap.add_argument("--title-text", default=None,
+                    help="Chữ TIÊU ĐỀ hiện to giữa màn hình mấy giây đầu video")
+    ap.add_argument("--title-sec", type=float, default=4.0,
+                    help="Số giây hiện tiêu đề (mặc định 4)")
+    ap.add_argument("--intro", default=None, help="Video intro ghép vào ĐẦU (tự chuẩn hóa khung)")
+    ap.add_argument("--outro", default=None, help="Video outro ghép vào CUỐI")
+    ap.add_argument("--sfx", default=None,
+                    help="File âm thanh SFX phát ở MỖI lần chuyển cảnh (whoosh...)")
+    ap.add_argument("--sfx-volume", type=float, default=0.5,
+                    help="Âm lượng SFX chuyển cảnh 0-1 (mặc định 0.5)")
     # --- Màu phim (#3) ---
     ap.add_argument("--color", choices=["none", "cinematic", "cold", "warm", "bw"],
                     default="none",
@@ -825,6 +979,23 @@ def main():
 
     tmp = tempfile.mkdtemp(prefix="autoedit_")
     try:
+        # 0) Clip Veo HỎNG (1 frame / không đọc được độ dài) -> video CO lệch audio
+        # (gotcha #4). Phát hiện TRƯỚC render: trích frame đầu làm ẢNH TĨNH thay thế.
+        for i, (src, d) in enumerate(scenes):
+            if src.lower().endswith(VIDEO_EXTS):
+                dur = probe_duration(src)
+                if not dur or dur < 0.2:
+                    png = os.path.join(tmp, f"fix_{i:04d}.png")
+                    try:
+                        run([FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-i", src,
+                             "-frames:v", "1", png], timeout=120)
+                        if os.path.isfile(png):
+                            scenes[i] = (png, d)
+                            print(tr(f"  ⚠️ Clip hỏng (1 frame): {os.path.basename(src)} "
+                                     f"— đã dùng như ẢNH TĨNH (Ken Burns) thay thế"))
+                    except SystemExit:
+                        pass
+
         # 1) Render từng cảnh (ảnh nằm giữa 2 ảnh -> render dài thêm để crossfade)
         is_img = [not s.lower().endswith(VIDEO_EXTS) for s, _ in scenes]
         use_xf = (args.transition != "none")
@@ -846,7 +1017,8 @@ def main():
             i, src, d = t
             try:
                 build_clip(src, d, clips[i], kenburns=not args.no_kenburns, index=i,
-                           clip_fit=args.clip_fit, edge_fade=not use_xf)
+                           clip_fit=args.clip_fit, edge_fade=not use_xf,
+                           clip_fade=(args.transition != "none"))
             except SystemExit as e:
                 raise SystemExit(f"Cảnh {i+1} ({os.path.basename(src)}): {e}")
             with plock:
@@ -899,10 +1071,22 @@ def main():
             if not clipsnd:
                 print(tr("  (không clip nào có âm thanh — bỏ qua)"))
 
+        # 2c) Track SFX chuyển cảnh (whoosh ở đầu mỗi cảnh, trừ cảnh 1)
+        sfxsnd = None
+        if args.sfx and os.path.isfile(args.sfx) and len(scenes) > 1:
+            print(tr("• Dựng track SFX chuyển cảnh..."))
+            sfxsnd = build_sfx_track(scenes, tmp, os.path.abspath(args.sfx),
+                                     args.sfx_volume)
+
         # 3) Pass cuối: màu phim + vignette + hạt phim + phụ đề + voice + NHẠC NỀN
         os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
         out_abs = os.path.abspath(args.out)
-        bgm = os.path.abspath(args.bgm) if (args.bgm and os.path.isfile(args.bgm)) else None
+        # NHẠC NỀN: file đơn hoặc FOLDER nhiều bài (tự nối thành playlist, tránh lặp 1 bài)
+        bgm = None
+        if args.bgm and os.path.isdir(args.bgm):
+            bgm = build_bgm_playlist(args.bgm, tmp)
+        elif args.bgm and os.path.isfile(args.bgm):
+            bgm = os.path.abspath(args.bgm)
         vid_dur = probe_duration(silent) or total_end
 
         # Chuỗi filter VIDEO (#3): màu -> vignette -> hạt phim -> phụ đề
@@ -924,9 +1108,18 @@ def main():
                        outline_color=args.sub_outline_color)
             cwd = tmp                       # chạy ffmpeg trong temp -> path phụ đề tương đối
             vchain.append("subtitles=subs.ass")
+        if args.title_text and args.title_text.strip():
+            # TIÊU ĐỀ MỞ VIDEO: ASS riêng (chữ to giữa 1/3 trên, fade), vẽ TRÊN mọi lớp màu
+            tass = os.path.join(tmp, "title.ass")
+            _write_title_ass(tass, WIDTH, HEIGHT, args.title_text.strip(),
+                             seconds=args.title_sec, font=args.sub_font)
+            cwd = tmp
+            vchain.append("subtitles=title.ass")
 
+        logo = (os.path.abspath(args.logo)
+                if (args.logo and os.path.isfile(args.logo)) else None)
         cmd = [FFMPEG, "-y", "-i", silent]
-        aidx, nin = {}, 1                              # chỉ số input audio động
+        aidx, nin = {}, 1                              # chỉ số input động
         if voice:
             cmd += ["-i", os.path.abspath(voice)]
             aidx["voice"] = nin; nin += 1
@@ -936,13 +1129,31 @@ def main():
         if clipsnd:
             cmd += ["-i", clipsnd]                     # tiếng gốc của clip (đã khớp cảnh)
             aidx["snd"] = nin; nin += 1
+        if sfxsnd:
+            cmd += ["-i", sfxsnd]                      # SFX chuyển cảnh (đã áp âm lượng)
+            aidx["sfx"] = nin; nin += 1
+        lidx = None
+        if logo:
+            cmd += ["-i", logo]
+            lidx = nin; nin += 1
 
-        if bgm or clipsnd:
-            # Có nhạc nền / tiếng clip -> gộp vào -filter_complex (video + trộn audio)
+        if bgm or clipsnd or sfxsnd or logo:
+            # Nguồn phụ (nhạc/tiếng clip/sfx/logo) -> gộp vào -filter_complex
             fc = []
+            vsrc = "[0:v]"
             if vchain:
-                fc.append(f"[0:v]{','.join(vchain)}[v]")
+                fc.append(f"[0:v]{','.join(vchain)}[vc]")
+                vsrc = "[vc]"
+            if logo:                                    # logo/watermark đè TRÊN cùng
+                op = max(0.0, min(1.0, args.logo_opacity))
+                pos = {"tl": "24:24", "tr": "W-w-24:24", "bl": "24:H-h-24",
+                       "br": "W-w-24:H-h-24"}[args.logo_pos]
+                fc.append(f"[{lidx}:v]scale=-1:{max(24, args.logo_size)},format=rgba,"
+                          f"colorchannelmixer=aa={op:.3f}[lg]")
+                fc.append(f"{vsrc}[lg]overlay={pos}[v]")
                 vmap = "[v]"
+            elif vchain:
+                vmap = "[vc]"
             else:
                 vmap = "0:v:0"
             terms = []                                 # các nhánh audio đưa vào amix
@@ -955,6 +1166,8 @@ def main():
                 cvol = max(0.0, min(2.0, args.clip_volume))
                 fc.append(f"[{aidx['snd']}:a]volume={cvol:.3f}[csnd]")
                 terms.append("[csnd]")
+            if sfxsnd:
+                terms.append(f"[{aidx['sfx']}:a]")
             if voice:
                 if bgm and not args.no_duck:
                     # ducking: nhạc TỰ NHỎ lại khi có lời (voice làm sidechain)
@@ -970,11 +1183,12 @@ def main():
                 terms.append("[bgm]")
             if len(terms) == 1:
                 fc.append(f"{terms[0]}anull[aout]")
-            else:
+            elif terms:
                 fc.append(f"{''.join(terms)}amix=inputs={len(terms)}:normalize=0[aout]")
-            cmd += (["-filter_complex", ";".join(fc), "-map", vmap, "-map", "[aout]"]
+            amaps = (["-map", "[aout]", "-c:a", "aac", "-b:a", "192k"] if terms else [])
+            cmd += (["-filter_complex", ";".join(fc), "-map", vmap] + amaps
                     + enc_args() + ["-pix_fmt", "yuv420p",
-                    "-c:a", "aac", "-b:a", "192k", "-t", f"{vid_dur:.3f}", out_abs])
+                    "-t", f"{vid_dur:.3f}", out_abs])
             print(tr("• Đang render bản cuối (màu + phụ đề + voice + nhạc nền)..."))
         else:
             # Không nhạc nền -> dùng -vf cho video như cũ
@@ -990,6 +1204,12 @@ def main():
             print(tr("• Đang render bản cuối (phụ đề + voice)..."))
 
         run(cmd, cwd=cwd)
+
+        # 4) Ghép INTRO/OUTRO kênh (nếu có) — concat copy, không re-encode video chính
+        if ((args.intro and os.path.isfile(args.intro))
+                or (args.outro and os.path.isfile(args.outro))):
+            print(tr("• Ghép intro/outro vào video..."))
+            _attach_intro_outro(out_abs, args.intro, args.outro, tmp)
 
         print("\n" + tr(f"✅ XONG: {out_abs}"))
         if audio_dur and segs[-1]['end'] < audio_dur - 0.5:
