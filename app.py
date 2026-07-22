@@ -51,9 +51,11 @@ def default_config():
         "aspect": "16:9",                           # khung hình render: 16:9 | 9:16
         "clip_audio": False,                        # giữ âm thanh gốc của clip
         "clip_volume": "0.25",
+        "voice_volume": "1.0",                      # âm lượng voiceover (1.0 = giữ nguyên)
         "logo": "",                                 # thương hiệu: watermark + tiêu đề + i/o + sfx
         "logo_pos": "br",
         "logo_opacity": "0.85",
+        "logo_shape": "round",                      # kiểu logo: square | round | circle
         "title_on": False,
         "title_sec": "4",
         "intro": "",
@@ -282,10 +284,12 @@ class App:
         self.grain = tk.BooleanVar(value=False)
         self.clip_audio = tk.BooleanVar(value=bool(self.cfg.get("clip_audio", False)))
         self.clip_volume = tk.StringVar(value=str(self.cfg.get("clip_volume", "0.25")))
+        self.voice_volume = tk.StringVar(value=str(self.cfg.get("voice_volume", "1.0")))
         # Thương hiệu kênh: logo/watermark + tiêu đề mở video + intro/outro + SFX
         self.logo = tk.StringVar(value=self.cfg.get("logo", ""))
         self.logo_pos = tk.StringVar(value=self.cfg.get("logo_pos", "br"))
         self.logo_opacity = tk.StringVar(value=str(self.cfg.get("logo_opacity", "0.85")))
+        self.logo_shape = tk.StringVar(value=self.cfg.get("logo_shape", "round"))
         self.title_on = tk.BooleanVar(value=bool(self.cfg.get("title_on", False)))
         self.title_sec = tk.StringVar(value=str(self.cfg.get("title_sec", "4")))
         self.intro = tk.StringVar(value=self.cfg.get("intro", ""))
@@ -831,6 +835,10 @@ class App:
         ttk.Label(line3b, text="Âm lượng tiếng clip:").pack(side="left", padx=(12, 2))
         ttk.Spinbox(line3b, from_=0.0, to=1.0, increment=0.05, width=5,
                     textvariable=self.clip_volume).pack(side="left")
+        # Âm lượng VOICEOVER (1.0 = giữ nguyên như cũ; giảm khi voice quá to)
+        ttk.Label(line3b, text="🎙 Âm lượng voice:").pack(side="left", padx=(14, 2))
+        ttk.Spinbox(line3b, from_=0.0, to=2.0, increment=0.05, width=5,
+                    textvariable=self.voice_volume).pack(side="left")
 
         # ---- THƯƠNG HIỆU: logo + tiêu đề mở video + intro/outro + SFX chuyển cảnh ----
         fb = ttk.LabelFrame(parent, text="Thương hiệu kênh (tùy chọn — bỏ trống = như cũ)")
@@ -848,6 +856,14 @@ class App:
         ttk.Label(rb1, text="Độ mờ:").pack(side="left", padx=(10, 2))
         ttk.Spinbox(rb1, from_=0.1, to=1.0, increment=0.05, width=5,
                     textvariable=self.logo_opacity).pack(side="left")
+        # Kiểu logo: vuông gốc / bo góc mềm / tròn avatar
+        rb1b = ttk.Frame(fb)
+        rb1b.pack(fill="x", padx=10, pady=2)
+        ttk.Label(rb1b, text="Kiểu logo:").pack(side="left")
+        for val, lbl in (("round", "Bo góc mềm"), ("circle", "Tròn avatar"),
+                         ("square", "Vuông gốc")):
+            ttk.Radiobutton(rb1b, text=lbl, value=val, variable=self.logo_shape,
+                            command=self._save_brand).pack(side="left", padx=(8, 0))
         rb2 = ttk.Frame(fb)
         rb2.pack(fill="x", padx=10, pady=2)
         ttk.Checkbutton(rb2, text="🅣 Chèn TIÊU ĐỀ mở video (lấy từ ô 📌 Tiêu đề, chữ to + fade)",
@@ -1882,6 +1898,7 @@ class App:
         for k, v in (("logo", self.logo.get().strip()),
                      ("logo_pos", self.logo_pos.get()),
                      ("logo_opacity", self.logo_opacity.get().strip()),
+                     ("logo_shape", self.logo_shape.get()),
                      ("title_on", bool(self.title_on.get())),
                      ("title_sec", self.title_sec.get().strip()),
                      ("intro", self.intro.get().strip()),
@@ -1893,7 +1910,8 @@ class App:
 
     # ---------- HỒ SƠ KÊNH: lưu/áp trọn bộ cài đặt cho từng kênh ----------
     _CHANNEL_KEYS = ("aspect", "sub_font", "sub_mode", "sub_outline", "kara_color",
-                     "clip_audio", "clip_volume", "logo", "logo_pos", "logo_opacity",
+                     "clip_audio", "clip_volume", "voice_volume",
+                     "logo", "logo_pos", "logo_opacity", "logo_shape",
                      "title_on", "title_sec", "intro", "outro", "sfx", "sfx_volume",
                      "bgm", "bgm_volume", "duck", "transition", "crossfade", "kenburns",
                      "color", "vignette", "grain", "active_profile", "main_character")
@@ -1905,8 +1923,10 @@ class App:
             "kara_color": self.kara_color.get(),
             "clip_audio": bool(self.clip_audio.get()),
             "clip_volume": self.clip_volume.get(),
+            "voice_volume": self.voice_volume.get(),
             "logo": self.logo.get(), "logo_pos": self.logo_pos.get(),
             "logo_opacity": self.logo_opacity.get(),
+            "logo_shape": self.logo_shape.get(),
             "title_on": bool(self.title_on.get()), "title_sec": self.title_sec.get(),
             "intro": self.intro.get(), "outro": self.outro.get(),
             "sfx": self.sfx.get(), "sfx_volume": self.sfx_volume.get(),
@@ -1927,8 +1947,10 @@ class App:
         self.kara_color.set(d.get("kara_color", "#FFFF00"))
         self.clip_audio.set(bool(d.get("clip_audio", False)))
         self.clip_volume.set(str(d.get("clip_volume", "0.25")))
+        self.voice_volume.set(str(d.get("voice_volume", "1.0")))
         self.logo.set(d.get("logo", "")); self.logo_pos.set(d.get("logo_pos", "br"))
         self.logo_opacity.set(str(d.get("logo_opacity", "0.85")))
+        self.logo_shape.set(d.get("logo_shape", "round"))
         self.title_on.set(bool(d.get("title_on", False)))
         self.title_sec.set(str(d.get("title_sec", "4")))
         self.intro.set(d.get("intro", "")); self.outro.set(d.get("outro", ""))
@@ -2074,6 +2096,7 @@ class App:
     def _save_clip_audio(self):
         self.cfg["clip_audio"] = bool(self.clip_audio.get())
         self.cfg["clip_volume"] = self.clip_volume.get().strip()
+        self.cfg["voice_volume"] = self.voice_volume.get().strip()
         save_config(self.cfg)
 
     def _save_subopts(self):
@@ -2094,8 +2117,10 @@ class App:
             "kenburns": self.kenburns.get(), "subs": self.subs.get(),
             "aspect": self.aspect.get(),
             "clip_audio": self.clip_audio.get(), "clip_volume": self.clip_volume.get(),
+            "voice_volume": self.voice_volume.get(),
             "logo": self.logo.get(), "logo_pos": self.logo_pos.get(),
             "logo_opacity": self.logo_opacity.get(),
+            "logo_shape": self.logo_shape.get(),
             "title_on": self.title_on.get(), "title_sec": self.title_sec.get(),
             "title_text": self.video_title.get(),
             "intro": self.intro.get(), "outro": self.outro.get(),
@@ -2127,10 +2152,17 @@ class App:
             except (TypeError, ValueError):
                 cv = 0.25
             cmd += ["--keep-clip-audio", "--clip-volume", f"{min(max(cv, 0.0), 1.0):g}"]
+        try:                                           # âm lượng voice (1.0 = như cũ)
+            vv = float(job.get("voice_volume", "1.0"))
+        except (TypeError, ValueError):
+            vv = 1.0
+        if abs(vv - 1.0) > 0.001:
+            cmd += ["--voice-volume", f"{min(max(vv, 0.0), 2.0):g}"]
         lg = (job.get("logo") or "").strip()           # thương hiệu: logo + tiêu đề + i/o + sfx
         if lg and os.path.isfile(lg):
             cmd += ["--logo", lg, "--logo-pos", job.get("logo_pos") or "br",
-                    "--logo-opacity", str(job.get("logo_opacity") or "0.85")]
+                    "--logo-opacity", str(job.get("logo_opacity") or "0.85"),
+                    "--logo-shape", job.get("logo_shape") or "round"]
         if job.get("title_on") and (job.get("title_text") or "").strip():
             cmd += ["--title-text", job["title_text"].strip(),
                     "--title-sec", str(job.get("title_sec") or "4")]

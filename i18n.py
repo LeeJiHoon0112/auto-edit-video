@@ -120,6 +120,11 @@ EN = {
     "🔉 Giữ âm thanh gốc của clip (mặc định tắt tiếng)":
         "🔉 Keep the clips' original audio (muted by default)",
     "Âm lượng tiếng clip:": "Clip audio volume:",
+    "🎙 Âm lượng voice:": "🎙 Voice volume:",
+    "Kiểu logo:": "Logo style:",
+    "Bo góc mềm": "Soft rounded",
+    "Tròn avatar": "Circle avatar",
+    "Vuông gốc": "Original square",
     "• Tách âm thanh gốc của clip (khớp từng cảnh)...":
         "• Extracting the clips' original audio (scene-aligned)...",
     "  (không clip nào có âm thanh — bỏ qua)": "  (no clip has audio — skipped)",

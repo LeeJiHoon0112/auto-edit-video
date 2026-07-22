@@ -831,6 +831,8 @@ def main():
                          "trộn dưới voice với âm lượng --clip-volume")
     ap.add_argument("--clip-volume", type=float, default=0.25,
                     help="Âm lượng âm thanh gốc của clip (0-1, mặc định 0.25)")
+    ap.add_argument("--voice-volume", type=float, default=1.0,
+                    help="Âm lượng VOICEOVER 0-2 (mặc định 1.0 = giữ nguyên)")
     ap.add_argument("--aspect", choices=["16:9", "9:16"], default="16:9",
                     help="Khung hình video: 16:9 ngang 1920x1080 (mặc định, YouTube) | "
                          "9:16 dọc 1080x1920 (Shorts/TikTok/Reels)")
@@ -841,6 +843,9 @@ def main():
                     help="Chiều cao logo (px, mặc định 96)")
     ap.add_argument("--logo-opacity", type=float, default=0.85,
                     help="Độ mờ logo 0-1 (mặc định 0.85)")
+    ap.add_argument("--logo-shape", choices=["square", "round", "circle"], default="round",
+                    help="Kiểu logo: square=vuông gốc | round=bo góc mềm (mặc định) | "
+                         "circle=tròn avatar (cắt vuông giữa + bo tròn)")
     ap.add_argument("--title-text", default=None,
                     help="Chữ TIÊU ĐỀ hiện to giữa màn hình mấy giây đầu video")
     ap.add_argument("--title-sec", type=float, default=4.0,
@@ -1120,20 +1125,25 @@ def main():
 
         logo = (os.path.abspath(args.logo)
                 if (args.logo and os.path.isfile(args.logo)) else None)
-        logo_ready = False              # logo đã scale + BO TRÒN GÓC sẵn (PNG tạm)?
-        if logo:
-            # BO TRÒN GÓC logo (bán kính ~20% chiều cao) cho watermark mềm mắt:
-            # scale + bo alpha 1 lần ra PNG tạm; logo có nền trong suốt sẵn thì góc
-            # vốn alpha=0 nên không đổi. Lỗi -> dùng logo gốc (vuông) như cũ.
-            _rnd = os.path.join(tmp, "logo_round.png")
+        logo_ready = False              # logo đã scale + tạo hình sẵn (PNG tạm)?
+        if logo and args.logo_shape != "square":
+            # KIỂU LOGO: round = bo góc mềm (bán kính ~20% chiều cao) | circle = tròn
+            # avatar (cắt vuông giữa + bo alpha hình tròn). Làm 1 lần ra PNG tạm; logo
+            # nền trong suốt sẵn thì phần alpha=0 không đổi. Lỗi -> dùng logo gốc.
+            _rnd = os.path.join(tmp, "logo_shape.png")
+            _size = max(24, args.logo_size)
+            if args.logo_shape == "circle":
+                _vf = (f"scale=-1:{_size},crop='min(iw,ih)':'min(iw,ih)',format=rgba,"
+                       "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
+                       "a='alpha(X,Y)*clip(W/2-hypot(X-(W-1)/2,Y-(H-1)/2)+0.5,0,1)'")
+            else:
+                _vf = (f"scale=-1:{_size},format=rgba,"
+                       "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
+                       "a='alpha(X,Y)*clip(H/5-hypot(max(max(H/5-X,X-W+1+H/5),0),"
+                       "max(max(H/5-Y,Y-H+1+H/5),0))+0.5,0,1)'")
             try:
                 run([FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-i", logo,
-                     "-vf", "scale=-1:%d,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':"
-                            "b='b(X,Y)':a='alpha(X,Y)*clip(H/5-hypot("
-                            "max(max(H/5-X,X-W+1+H/5),0),"
-                            "max(max(H/5-Y,Y-H+1+H/5),0))+0.5,0,1)'"
-                            % max(24, args.logo_size),
-                     "-frames:v", "1", _rnd], timeout=120)
+                     "-vf", _vf, "-frames:v", "1", _rnd], timeout=120)
                 if os.path.isfile(_rnd):
                     logo, logo_ready = _rnd, True
             except SystemExit:
@@ -1168,7 +1178,8 @@ def main():
                 op = max(0.0, min(1.0, args.logo_opacity))
                 pos = {"tl": "24:24", "tr": "W-w-24:24", "bl": "24:H-h-24",
                        "br": "W-w-24:H-h-24"}[args.logo_pos]
-                fc.append(f"[{lidx}:v]scale=-1:{max(24, args.logo_size)},format=rgba,"
+                pre = "" if logo_ready else f"scale=-1:{max(24, args.logo_size)},"
+                fc.append(f"[{lidx}:v]{pre}format=rgba,"
                           f"colorchannelmixer=aa={op:.3f}[lg]")
                 fc.append(f"{vsrc}[lg]overlay={pos}[v]")
                 vmap = "[v]"
@@ -1189,16 +1200,22 @@ def main():
             if sfxsnd:
                 terms.append(f"[{aidx['sfx']}:a]")
             if voice:
+                # Âm lượng VOICE (mặc định 1.0 = như cũ, chỉ chèn filter khi user đổi)
+                vv = max(0.0, min(2.0, args.voice_volume))
+                va = f"[{aidx['voice']}:a]"
+                if abs(vv - 1.0) > 0.001:
+                    fc.append(f"{va}volume={vv:.3f}[vvol]")
+                    va = "[vvol]"
                 if bgm and not args.no_duck:
                     # ducking: nhạc TỰ NHỎ lại khi có lời (voice làm sidechain)
-                    fc.append(f"[{aidx['voice']}:a]asplit=2[vmix][vsc]")
+                    fc.append(f"{va}asplit=2[vmix][vsc]")
                     fc.append("[bgm][vsc]sidechaincompress=threshold=0.05:ratio=8:"
                               "attack=15:release=300[bgd]")
                     terms += ["[bgd]", "[vmix]"]
                 else:
                     if bgm:
                         terms.append("[bgm]")
-                    terms.append(f"[{aidx['voice']}:a]")
+                    terms.append(va)
             elif bgm:
                 terms.append("[bgm]")
             if len(terms) == 1:
@@ -1218,6 +1235,9 @@ def main():
             if voice:
                 cmd += ["-c:a", "aac", "-b:a", "192k", "-map", "0:v:0", "-map", "1:a:0",
                         "-shortest"]
+                vv = max(0.0, min(2.0, args.voice_volume))
+                if abs(vv - 1.0) > 0.001:
+                    cmd += ["-af", f"volume={vv:.3f}"]
             else:
                 cmd += ["-map", "0:v:0"]
             cmd += [out_abs]
