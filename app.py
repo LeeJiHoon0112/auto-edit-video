@@ -478,9 +478,19 @@ class App:
             try:
                 import license_client as lic
                 import requests
-                r = requests.get(config.LICENSE_SERVER_URL.rstrip("/") + "/version", timeout=10)
-                r.raise_for_status()
-                d = r.json()
+                # ⚠️ Phải hỏi CÙNG KÊNH với auto-check (manifest) — trước đây nút này hỏi
+                # thẳng server cũ nên khi server chưa kịp set bản mới, nút báo "mới nhất"
+                # SAI trong khi manifest đã có bản mới (bug user kẹt 1.2.0).
+                murl = getattr(config, "UPDATE_MANIFEST_URL", "")
+                if murl:
+                    r = requests.get(murl, timeout=10)
+                    r.raise_for_status()
+                    d = r.json().get(lic.PRODUCT_ID, {}) or {}
+                else:                       # chạy từ source repo (không có manifest URL)
+                    r = requests.get(config.LICENSE_SERVER_URL.rstrip("/") + "/version",
+                                     timeout=10)
+                    r.raise_for_status()
+                    d = r.json()
                 latest = (d.get("latest_version") or "").strip()
                 if latest and lic._ver_tuple(latest) > lic._ver_tuple(cur):
                     info = {"latest": latest, "url": (d.get("download_url") or "").strip(),
