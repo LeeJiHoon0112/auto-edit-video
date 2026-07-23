@@ -48,6 +48,9 @@ For EACH scene, write ONE concise English line that:
 - Describes MOTION / action (a short moving clip): use action verbs.
 - Keep each scene to ONE single action/moment; do NOT chain events with "then" / "transitions to" / "followed by" (each clip lasts only a few seconds).
 - SHOT VARIETY & VISUAL HOOK: strongly VARY the shot type across scenes — wide establishing, medium, close-up, extreme close-up of eyes/hands/an object, over-the-shoulder, low or high angle, tilted/Dutch angle, framed through a foreground object or doorway, silhouette, reflection, or POV; compose with DEPTH and ONE clear eye-catching focal point. Do NOT repeat the same framing, and avoid a plain centred talking figure. For an ABSTRACT idea (an emotion, a concept, anything with no literal scene), show a striking visual METAPHOR or symbolic image instead of a person standing.
+- NAME THE SHOT (MANDATORY): state the shot type and angle EXPLICITLY in every line (e.g. "Low-angle close-up of...", "Wide establishing shot of..."). Never give two consecutive scenes the same shot type.
+- CAMERA MOVE (MANDATORY — this is a moving clip): give each scene exactly ONE camera movement — slow push-in, pull-back, pan, tilt, tracking/follow, slow orbit, gentle handheld sway, or locked-off static — VARY it from scene to scene and match its speed to the narration's energy (tense = faster, sharper; calm = slow, settling).
+- NARRATIVE ARC (read the WHOLE list before writing): a scene that OPENS a new idea → wide establishing; scenes that BUILD the idea → medium framings; the most emotional or most important line of a section → close-up or extreme close-up; a small object or piece of evidence → detail insert; the FINAL scene → a settling wide or a slow pull-back. The result must feel like a film edited by a human, not a row of similar shots.
 - CONCRETE DETAIL: fill the frame with SPECIFIC tangible detail — name the key objects/props and what sits in the foreground vs the background, and show the character's exact posture, gesture and gaze. Never settle for a generic "person with an expression"; make every frame specific and rich.
 - COLOUR / ERA: a style profile JSON with "scene_modes" is given below. Pick the scene_mode whose "when" best matches this scene's era/topic and apply ONLY its background, palette and lighting (the colours and setting). Do NOT describe the drawing style itself.
 - CHARACTER CONSISTENCY (MANDATORY): the "characters" field lists distinct character types with their visual traits. Every time a human appears in a scene, follow BOTH steps:
@@ -70,6 +73,8 @@ For EACH scene, write ONE concise English line that:
 - Visually conveys the MEANING of the narration (not a literal word-for-word transcription).
 - Describes a SINGLE STILL moment (subject, setting, framing). Do NOT describe motion or camera movement — one frozen frame held still.
 - SHOT VARIETY & VISUAL HOOK: strongly VARY the shot type across scenes — wide establishing, medium, close-up, extreme close-up of eyes/hands/an object, over-the-shoulder, low or high angle, tilted/Dutch angle, framed through a foreground object or doorway, silhouette, reflection, or POV; compose with DEPTH and ONE clear eye-catching focal point. Do NOT repeat the same framing, and avoid a plain centred talking figure. For an ABSTRACT idea (an emotion, a concept, anything with no literal scene), show a striking visual METAPHOR or symbolic image instead of a person standing.
+- NAME THE SHOT (MANDATORY): state the shot type and angle EXPLICITLY in every line (e.g. "Low-angle close-up of...", "Wide establishing shot of..."). Never give two consecutive scenes the same shot type.
+- NARRATIVE ARC (read the WHOLE list before writing): a scene that OPENS a new idea → wide establishing; scenes that BUILD the idea → medium framings; the most emotional or most important line of a section → close-up or extreme close-up; a small object or piece of evidence → detail insert; the FINAL scene → a settling wide. The result must feel like a film edited by a human, not a row of similar shots.
 - CONCRETE DETAIL: fill the frame with SPECIFIC tangible detail — name the key objects/props and what sits in the foreground vs the background, and show the character's exact posture, gesture and gaze. Never settle for a generic "person with an expression"; make every frame specific and rich.
 - COLOUR / ERA: a style profile JSON with "scene_modes" is given below. Pick the scene_mode whose "when" best matches this scene's era/topic and apply ONLY its background, palette and lighting (the colours and setting). Do NOT describe the drawing style itself.
 - CHARACTER CONSISTENCY (MANDATORY): the "characters" field lists distinct character types with their visual traits. Every time a human appears in a scene, follow BOTH steps:
@@ -92,6 +97,8 @@ For EACH scene (you get its NARRATION), write ONE short English line describing:
 - WHO / WHAT appears and a minimal setting.
 - The ACTION / motion happening (use action verbs — it is a moving clip).
 - SHOT VARIETY & VISUAL HOOK: strongly vary the shot type (wide, medium, close-up, extreme close-up of eyes/hands/an object, over-the-shoulder, low/high/tilted angle, foreground-framed, silhouette, reflection, POV); compose with depth and one eye-catching focal point; avoid repeating the same framing or a plain centred talking figure. For an abstract idea, use a striking visual metaphor instead of a person standing. Fill the frame with SPECIFIC tangible detail (key objects/props, foreground vs background, the character's exact posture/gesture/gaze); never settle for a generic "person with an expression".
+- NAME THE SHOT + CAMERA MOVE (MANDATORY): every line states its shot type/angle explicitly AND exactly one camera movement (slow push-in, pull-back, pan, tilt, tracking/follow, slow orbit, gentle handheld, locked-off static) — never the same shot type or the same move in two consecutive scenes; movement speed matches the narration's energy (tense = faster, calm = slow).
+- NARRATIVE ARC (read the whole list first): a scene opening a new idea → wide establishing; building scenes → medium; the emotional peak of a section → (extreme) close-up; a small object → detail insert; the final scene → settling wide or slow pull-back. The video must feel edited by a human, not a row of similar shots.
 Keep it to ONE concise sentence. Do NOT describe style, colors, or how it is drawn/rendered.
 
 Return ONLY a JSON array of strings, exactly one per scene, in the SAME ORDER. No commentary, no extra keys."""
@@ -101,6 +108,8 @@ SYSTEM_CONTENT_IMAGE = """You describe ONLY the visual CONTENT of each scene for
 For EACH scene (you get its NARRATION), write ONE short English line describing:
 - WHO / WHAT appears and a minimal setting (a single STILL moment — no motion, no camera movement).
 - SHOT VARIETY & VISUAL HOOK: strongly vary the shot type (wide, medium, close-up, extreme close-up of eyes/hands/an object, over-the-shoulder, low/high/tilted angle, foreground-framed, silhouette, reflection, POV); compose with depth and one eye-catching focal point; avoid repeating the same framing or a plain centred talking figure. For an abstract idea, use a striking visual metaphor instead of a person standing. Fill the frame with SPECIFIC tangible detail (key objects/props, foreground vs background, the character's exact posture/gesture/gaze); never settle for a generic "person with an expression".
+- NAME THE SHOT (MANDATORY): every line states its shot type/angle explicitly (e.g. "Low-angle close-up of...") — never the same shot type in two consecutive scenes.
+- NARRATIVE ARC (read the whole list first): a scene opening a new idea → wide establishing; building scenes → medium; the emotional peak of a section → (extreme) close-up; a small object → detail insert; the final scene → settling wide. The set must feel edited by a human, not a row of similar shots.
 Keep it to ONE concise sentence. Do NOT describe style, colors, or how it is drawn/rendered.
 
 Return ONLY a JSON array of strings, exactly one per scene, in the SAME ORDER. No commentary, no extra keys."""
@@ -480,6 +489,9 @@ def _title_context(title):
             f'Use it to understand the overarching theme and narrative so every prompt '
             f'feels like it belongs to THIS specific story: consistent metaphors and '
             f'consistent emotional tone.\n'
+            f'Also give THIS video ONE consistent atmosphere of its own (time of day, '
+            f'weather, quality of light) where the narration and the style rules allow — '
+            f'so different videos on the same channel do not all look identical.\n'
             f'CRITICAL: the title gives you the THEME ONLY. It must NEVER override the '
             f'era, setting or character type of an INDIVIDUAL scene. Each scene\'s own '
             f'narration decides whether it is prehistoric or modern (or any other setting). '
@@ -552,6 +564,16 @@ def _run_batches(system, scenes_text, api_key, model, batch, progress, provider)
         listing = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(chunk))
         user = (f"Here are {len(chunk)} scenes. Write one prompt for each, "
                 f"returning a JSON array of exactly {len(chunk)} strings, in order.\n\n{listing}")
+        if out:
+            # CHỐNG LẶP QUA RANH GIỚI BATCH: cho AI thấy 2 prompt CUỐI của batch trước
+            # để batch sau không mở đầu bằng đúng cỡ cảnh/chuyển động máy vừa dùng.
+            tail = [p for p in out[-2:] if (p or "").strip()]
+            if tail:
+                prev = "\n".join(f"- {p}" for p in tail)
+                user = (f"CONTEXT — the prompts for the scenes immediately BEFORE these "
+                        f"(already written) were:\n{prev}\n"
+                        f"Continue the variety: do NOT open with the same shot type or "
+                        f"camera move as those.\n\n{user}")
         txt, last, parsed = None, None, None
         for attempt in range(4):     # tự thử lại khi lỗi tạm thời (429/500/503)
             models_try = ([chosen] if chosen else []) + [m for m in order if m != chosen]
