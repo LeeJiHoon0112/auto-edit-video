@@ -569,9 +569,13 @@ def build_bgm_playlist(folder, tmp):
 
 
 def _attach_intro_outro(main_path, intro, outro, tmp):
-    """Ghép intro/outro kênh vào đầu/cuối video ĐÃ render: chuẩn hóa intro/outro về đúng
-    khung/fps/audio rồi concat COPY (không re-encode video chính). Concat lỗi/lệch thời
-    lượng -> fallback re-encode toàn bộ (chậm nhưng chắc)."""
+    """Ghép intro/outro kênh vào đầu/cuối video ĐÃ render. VIDEO: chuẩn hóa intro/outro
+    về đúng khung/fps rồi concat COPY (không re-encode video chính). AUDIO: LUÔN dựng
+    lại thành 1 track AAC LIỀN MẠCH — decode từng đoạn ra wav 48k stereo đúng độ dài
+    (đoạn không tiếng -> lặng), nối wav, encode AAC đúng 1 lần. ⚠️ KHÔNG được concat
+    COPY audio AAC từ nhiều nguồn: thông số/extradata lệch nhau làm HỎNG bitstream sau
+    mối nối — ffmpeg vẫn đọc được nhưng player của khách TẮT TIẾNG từ hết intro (bug
+    thật khách gặp 2026-07-24). Lệch thời lượng -> fallback re-encode video."""
     parts = []
     for tag, p in (("intro", intro), ("outro", outro)):
         if p and os.path.isfile(p):
@@ -596,24 +600,57 @@ def _attach_intro_outro(main_path, intro, outro, tmp):
     seq = ([n for t, n in parts if t == "intro"] + [main_tmp]
            + [n for t, n in parts if t == "outro"])
     want = sum(probe_duration(p) or 0 for p in seq)
+    # 1) VIDEO: concat copy CHỈ luồng hình (không đụng audio)
     lst = os.path.join(tmp, "concat_io.txt")
     with open(lst, "w", encoding="utf-8") as f:
         for p in seq:
             f.write("file '" + p.replace("\\", "/") + "'\n")
+    vcat = os.path.join(tmp, "io_video.mp4")
     try:
         run([FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-f", "concat",
-             "-safe", "0", "-i", lst, "-c", "copy", main_path], timeout=600)
+             "-safe", "0", "-i", lst, "-map", "0:v:0", "-c", "copy", vcat], timeout=600)
     except SystemExit:
         pass
-    got = probe_duration(main_path) or 0
-    if abs(got - want) > 1.5:            # copy-concat hỏng (codec lệch) -> re-encode chắc ăn
+    # 2) AUDIO: từng đoạn -> wav 48k stereo CHÍNH XÁC bằng độ dài đoạn (apad chống hụt,
+    #    không tiếng -> lặng) -> nối wav (cùng định dạng, an toàn) -> encode AAC 1 lần
+    awavs = []
+    for i, p in enumerate(seq):
+        w = os.path.join(tmp, f"io_a{i}.wav")
+        d = probe_duration(p) or 0
+        if probe_has_audio(p):
+            run([FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-i", p, "-vn",
+                 "-af", "aresample=48000,aformat=channel_layouts=stereo,apad",
+                 "-t", f"{d:.3f}", "-c:a", "pcm_s16le", w], timeout=600)
+        else:
+            run([FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+                 "-i", "anullsrc=r=48000:cl=stereo", "-t", f"{d:.3f}",
+                 "-c:a", "pcm_s16le", w], timeout=600)
+        awavs.append(w)
+    alst = os.path.join(tmp, "concat_io_a.txt")
+    with open(alst, "w", encoding="utf-8") as f:
+        for w in awavs:
+            f.write("file '" + w.replace("\\", "/") + "'\n")
+    acat = os.path.join(tmp, "io_audio.wav")
+    run([FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-f", "concat", "-safe", "0",
+         "-i", alst, "-c:a", "pcm_s16le", acat], timeout=600)
+    # 3) MUX: hình copy + tiếng AAC mới liền mạch
+    if os.path.isfile(vcat):
+        try:
+            run([FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-i", vcat,
+                 "-i", acat, "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy",
+                 "-c:a", "aac", "-b:a", "192k", main_path], timeout=600)
+        except SystemExit:
+            pass
+    got = (probe_duration(main_path) or 0) if os.path.isfile(main_path) else 0
+    if abs(got - want) > 1.5:            # copy-concat hình hỏng (codec lệch) -> re-encode
         print(tr("  (concat copy lệch — re-encode lại toàn bộ cho chắc)"))
-        fc = "".join(f"[{i}:v][{i}:a]" for i in range(len(seq)))
-        fc += f"concat=n={len(seq)}:v=1:a=1[v][a]"
+        fc = "".join(f"[{i}:v]" for i in range(len(seq)))
+        fc += f"concat=n={len(seq)}:v=1:a=0[v]"
         cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "error"]
         for p in seq:
             cmd += ["-i", p]
-        cmd += (["-filter_complex", fc, "-map", "[v]", "-map", "[a]"]
+        cmd += (["-i", acat, "-filter_complex", fc, "-map", "[v]",
+                 "-map", f"{len(seq)}:a:0", "-shortest"]
                 + enc_args() + ["-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
                                 main_path])
         run(cmd, timeout=1800)
