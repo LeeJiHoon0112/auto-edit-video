@@ -461,11 +461,16 @@ def _clip_fit_mode(duration, clip_len, clip_fit):
 
 
 def probe_has_audio(path):
-    """Clip có track âm thanh không (clip Veo có cái câm cái không)."""
+    """Clip có track âm thanh không (clip Veo có cái câm cái không).
+    ⚠️ PHẢI có CREATE_NO_WINDOW: hàm này chạy MỖI CẢNH một lần, thiếu cờ là mỗi lần bật
+    một cửa sổ console đen -> màn hình khách NHẤP NHÁY liên tục suốt lúc render (bản .exe
+    không có console nên Windows tạo console mới cho từng lệnh con)."""
+    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     try:
         out = subprocess.run([FFPROBE, "-v", "error", "-select_streams", "a",
                               "-show_entries", "stream=codec_type", "-of", "csv=p=0",
-                              path], capture_output=True, text=True, timeout=30).stdout
+                              path], capture_output=True, text=True, timeout=30,
+                             creationflags=flags).stdout
         return "audio" in (out or "")
     except Exception:
         return False

@@ -259,8 +259,11 @@ class App:
             self.app_ver = ""
         _vtag = f" {self.app_ver}" if self.app_ver else ""
         root.title(f"PeiPei Auto Edit Video{_vtag} 🎬")
-        root.geometry("880x720")
-        root.minsize(780, 640)
+        # Cao theo màn hình thật (màn to -> thấy trọn trang Render khỏi cuộn; laptop
+        # 768px vẫn vừa). Nội dung dài hơn cửa sổ đã có vùng cuộn lo (_scroll_area).
+        _h = max(600, min(860, root.winfo_screenheight() - 120))
+        root.geometry(f"880x{_h}")
+        root.minsize(780, 560)
 
         # Biến nguyên liệu DÙNG CHUNG giữa các trang (SRT dùng cho cả Prompt lẫn Render)
         self.srt = tk.StringVar(value=dflt("input", "subtitle.srt"))
@@ -332,23 +335,30 @@ class App:
             tk.Label(header, text=f"Phiên bản {self.app_ver}", fg="#888",
                      font=("", 9)).pack(side="right", padx=(0, 12))
 
-        # Khung trên: SIDEBAR trái + nội dung phải
+        # Khung trên: SIDEBAR trái + nội dung phải.
+        # ⚠️ CHƯA pack vội — phải pack SAU các thanh dưới (tiến độ/Nhật ký/trạng thái) để
+        # Tk cấp chỗ cho chúng TRƯỚC; pack top(expand) trước sẽ đẩy chúng khỏi cửa sổ.
         top = ttk.Frame(root)
-        top.pack(fill="both", expand=True, padx=6, pady=6)
         side = ttk.Frame(top, width=165)
         side.pack(side="left", fill="y", padx=(0, 6))
         side.pack_propagate(False)
         content = ttk.Frame(top)
         content.pack(side="left", fill="both", expand=True)
 
-        # 4 trang nội dung
+        # 4 trang nội dung — MỖI TRANG NẰM TRONG VÙNG CUỘN: trang Render cao hơn cửa sổ
+        # (đo thật: cần 773px, chỉ được cấp 683px) -> trước đây nút RENDER/Xem trước bị
+        # BẸP còn 1px = mất hút; máy khách để cỡ chữ 125% thì trang nào cũng dính.
         self.pages = {n: ttk.Frame(content)
                       for n in ("prompt", "render", "sleep", "queue", "settings")}
-        self._build_prompt(self.pages["prompt"])
-        self._build_render(self.pages["render"])
-        self._build_sleep(self.pages["sleep"])
-        self._build_queue(self.pages["queue"])
-        self._build_settings(self.pages["settings"])
+        self._build_prompt(self._scroll_area(self.pages["prompt"]))
+        # Trang Render: hàng nút chính (RENDER / Xem trước / Hàng đợi...) GHIM ngoài vùng
+        # cuộn -> luôn nhìn thấy, không phải cuộn tìm.
+        self._render_bar = ttk.Frame(self.pages["render"])
+        self._render_bar.pack(side="bottom", fill="x")
+        self._build_render(self._scroll_area(self.pages["render"]))
+        self._build_sleep(self._scroll_area(self.pages["sleep"]))
+        self._build_queue(self._scroll_area(self.pages["queue"]))
+        self._build_settings(self._scroll_area(self.pages["settings"]))
 
         # Nút điều hướng sidebar
         self._side_btns = {}
@@ -364,7 +374,6 @@ class App:
         # Log + status (dùng chung)
         # Thanh TIẾN ĐỘ render + ước tính thời gian còn lại (đọc từ log engine)
         prow = ttk.Frame(root)
-        prow.pack(fill="x", padx=6, pady=(0, 2))
         self.pbar = ttk.Progressbar(prow, maximum=100)
         self.pbar.pack(side="left", fill="x", expand=True)
         self.eta_var = tk.StringVar(value="")
@@ -373,7 +382,6 @@ class App:
         self._prog_t0 = None
 
         box = ttk.LabelFrame(root, text="Nhật ký")
-        box.pack(fill="both", expand=False, padx=6, pady=(0, 4))
         self.log = tk.Text(box, height=8, wrap="word", bg="#1e1e1e",
                            fg="#d4d4d4", insertbackground="white")
         self.log.pack(side="left", fill="both", expand=True)
@@ -381,9 +389,14 @@ class App:
         sb.pack(side="right", fill="y")
         self.log["yscrollcommand"] = sb.set
 
+        # Pack từ ĐÁY lên: trạng thái → Nhật ký → tiến độ, rồi mới tới khung trên
+        # (giữ nguyên thứ tự hiển thị như cũ nhưng 3 thanh này KHÔNG bao giờ bị đẩy mất).
         self.status = tk.StringVar(value="Sẵn sàng.")
         ttk.Label(root, textvariable=self.status, anchor="w",
                   relief="sunken").pack(fill="x", side="bottom")
+        box.pack(side="bottom", fill="x", padx=6, pady=(0, 4))
+        prow.pack(side="bottom", fill="x", padx=6, pady=(0, 2))
+        top.pack(fill="both", expand=True, padx=6, pady=6)
 
         self._refresh_license_label()
         self._show_page("prompt")
@@ -410,6 +423,38 @@ class App:
                 except Exception:  # noqa
                     pass
         self.root.destroy()
+
+    def _scroll_area(self, container):
+        """Bọc 1 trang vào vùng CUỘN (canvas + thanh cuộn dọc + lăn chuột) và trả về
+        frame BÊN TRONG để các _build_* pack vào như cũ. Trang ngắn -> thanh cuộn TỰ ẨN
+        (nhìn y hệt trước). Trang dài hơn cửa sổ -> cuộn xuống được, không mất nút nào."""
+        canvas = tk.Canvas(container, highlightthickness=0, bd=0,
+                           background=self.root.cget("background"))
+        vsb = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+        inner = ttk.Frame(canvas)
+        win = canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.configure(yscrollcommand=vsb.set)
+        canvas.pack(side="left", fill="both", expand=True)
+
+        def _sync(_e=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            need = inner.winfo_reqheight() > canvas.winfo_height() + 2
+            if need and not vsb.winfo_ismapped():
+                vsb.pack(side="right", fill="y")
+            elif not need and vsb.winfo_ismapped():
+                vsb.pack_forget()
+                canvas.yview_moveto(0)
+
+        inner.bind("<Configure>", _sync)
+        canvas.bind("<Configure>",
+                    lambda e: (canvas.itemconfigure(win, width=e.width), _sync()))
+
+        def _wheel(e):
+            if inner.winfo_reqheight() > canvas.winfo_height() + 2:
+                canvas.yview_scroll(-1 if e.delta > 0 else 1, "units")
+        canvas.bind("<Enter>", lambda _e: canvas.bind_all("<MouseWheel>", _wheel))
+        canvas.bind("<Leave>", lambda _e: canvas.unbind_all("<MouseWheel>"))
+        return inner
 
     def _show_page(self, name):
         for p in self.pages.values():
@@ -578,7 +623,9 @@ class App:
                 except Exception:
                     os.rename(oldexe, exe)         # lỗi -> khôi phục bản cũ
                     raise
-                subprocess.Popen([exe], cwd=os.path.dirname(exe) or None)   # mở bản mới
+                subprocess.Popen([exe], cwd=os.path.dirname(exe) or None,
+                                 creationflags=(subprocess.CREATE_NO_WINDOW
+                                                if os.name == "nt" else 0))  # mở bản mới
                 self.q.put(("selfupdate_done", None))                       # -> thoát bản cũ
             except Exception as e:  # noqa
                 try:
@@ -902,8 +949,11 @@ class App:
         ttk.Spinbox(rb4, from_=0.0, to=1.0, increment=0.05, width=5,
                     textvariable=self.sfx_volume).pack(side="left")
 
-        bar = ttk.Frame(parent)
-        bar.pack(fill="x", padx=8, pady=8)
+        # Hàng nút GHIM đáy (ngoài vùng cuộn) — chia 2 dòng: 7 nút trên 1 dòng vượt bề
+        # ngang cửa sổ làm nút cuối (📑 Chapters) bị BẸP còn 1px = coi như mất.
+        host = getattr(self, "_render_bar", parent)
+        bar = ttk.Frame(host)
+        bar.pack(fill="x", padx=8, pady=(8, 2))
         self.btn_render = ttk.Button(bar, text="▶  RENDER VIDEO", command=self.run_render)
         self.btn_render.pack(side="left", padx=4)
         ttk.Button(bar, text="👁️ Xem trước",
@@ -913,12 +963,14 @@ class App:
         self.btn_qc = ttk.Button(bar, text="🔍 Kiểm tra khớp nghĩa",
                                  command=self.run_qc_match)
         self.btn_qc.pack(side="left", padx=4)
-        ttk.Button(bar, text="📂 Mở thư mục xuất",
-                   command=self.open_out).pack(side="right", padx=4)
-        ttk.Button(bar, text="🖼 Frame thumbnail",
-                   command=self._export_thumb_frames).pack(side="right", padx=2)
-        ttk.Button(bar, text="📑 Chapters",
-                   command=self._export_chapters).pack(side="right", padx=2)
+        bar2 = ttk.Frame(host)
+        bar2.pack(fill="x", padx=8, pady=(0, 8))
+        ttk.Button(bar2, text="📑 Chapters",
+                   command=self._export_chapters).pack(side="left", padx=4)
+        ttk.Button(bar2, text="🖼 Frame thumbnail",
+                   command=self._export_thumb_frames).pack(side="left", padx=4)
+        ttk.Button(bar2, text="📂 Mở thư mục xuất",
+                   command=self.open_out).pack(side="left", padx=4)
 
         ttk.Label(parent, wraplength=640, foreground="#555",
                   text="Đặt clip Veo tên 01,02,... trong thư mục clip. Render dùng scenes.csv "
