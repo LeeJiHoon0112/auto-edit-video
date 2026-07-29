@@ -123,7 +123,7 @@ def _split_word_times(seg):
 
 
 def _write_ass(srt_path, ass_path, width, height, karaoke_color=SUB_KARAOKE_COLOR,
-               font=None, mode="word", outline_color=None):
+               font=None, mode="word", outline_color=None, size=None):
     """SRT -> ASS phụ đề. 3 CÁCH HIỂN THỊ (mode):
       - "word" (mặc định, như cũ): mỗi thời điểm chỉ hiện ĐÚNG 1 TỪ theo nhịp voice
         (mỗi từ 1 Dialogue, thời lượng chia theo số ký tự trong câu).
@@ -138,9 +138,16 @@ def _write_ass(srt_path, ass_path, width, height, karaoke_color=SUB_KARAOKE_COLO
     bold = -1
     prim = _hex_to_ass(karaoke_color)                # màu chữ (word/line) / màu tô tới (kara)
     outl = _hex_to_ass(outline_color, "&H00000000") if outline_color else "&H00000000"
-    style = (f"Style: Default,{font or SUB_FONT},{SUB_SIZE},"
+    # CỠ CHỮ: mặc định SUB_SIZE (=52, y như cũ). Chữ to/nhỏ thì viền + bóng scale THEO
+    # cho cân đối (chữ 90px mà viền vẫn 4px sẽ mảnh như sợi chỉ, nền sáng đọc không ra).
+    sz = int(size) if size else SUB_SIZE
+    sz = max(12, min(200, sz))
+    k = sz / float(SUB_SIZE)
+    outline = max(1, round(SUB_OUTLINE * k))
+    shadow = max(0, round(SUB_SHADOW * k))
+    style = (f"Style: Default,{font or SUB_FONT},{sz},"
              f"{prim},&H00FFFFFF,{outl},&H80000000,"
-             f"{bold},0,0,0,100,100,0,0,1,{SUB_OUTLINE},{SUB_SHADOW},"
+             f"{bold},0,0,0,100,100,0,0,1,{outline},{shadow},"
              f"2,60,60,{SUB_MARGIN_V},1")
     head = (
         "[Script Info]\nScriptType: v4.00+\nWrapStyle: 0\n"
@@ -868,6 +875,9 @@ def main():
                          "kara=cả câu + tô màu dần từng từ theo voice")
     ap.add_argument("--sub-outline-color", default=None,
                     help="Màu VIỀN chữ phụ đề (hex #RRGGBB, mặc định đen) — cho preset Neon...")
+    ap.add_argument("--sub-size", type=int, default=SUB_SIZE,
+                    help=f"CỠ CHỮ phụ đề tính bằng pixel (mặc định {SUB_SIZE}); "
+                         "viền + bóng tự dày lên theo cho cân đối")
     ap.add_argument("--keep-clip-audio", action="store_true",
                     help="GIỮ âm thanh gốc của clip (mặc định TẮT tiếng clip như cũ); "
                          "trộn dưới voice với âm lượng --clip-volume")
@@ -1154,7 +1164,7 @@ def main():
             subs = os.path.join(tmp, "subs.ass")
             _write_ass(args.srt, subs, WIDTH, HEIGHT, args.karaoke_color,
                        font=args.sub_font, mode=args.sub_mode,
-                       outline_color=args.sub_outline_color)
+                       outline_color=args.sub_outline_color, size=args.sub_size)
             cwd = tmp                       # chạy ffmpeg trong temp -> path phụ đề tương đối
             vchain.append("subtitles=subs.ass")
         if args.title_text and args.title_text.strip():

@@ -68,6 +68,7 @@ def default_config():
         "sub_font": "Arial Black",
         "sub_mode": "word",
         "sub_outline": "#000000",
+        "sub_size": "52",                           # cỡ chữ phụ đề (px), 52 = như cũ
         "sleep_item_sec": "20",
         "main_character": "",
         "prompt_dir": "",                           # thư mục lưu prompt+scenes (trống=gốc)
@@ -280,6 +281,7 @@ class App:
         self.sub_font = tk.StringVar(value=self.cfg.get("sub_font", "Arial Black"))
         self.sub_mode = tk.StringVar(value=self.cfg.get("sub_mode", "word"))
         self.sub_outline = tk.StringVar(value=self.cfg.get("sub_outline", "#000000"))
+        self.sub_size = tk.StringVar(value=str(self.cfg.get("sub_size", "52")))
         self.crossfade = tk.BooleanVar(value=False)
         self.transition = tk.StringVar(value="fade")   # kiểu chuyển cảnh khi bật Crossfade (#2)
         self.color = tk.StringVar(value="none")        # màu phim (#3)
@@ -814,10 +816,16 @@ class App:
                    "Tahoma", "Verdana", "Bahnschrift", "Calibri", "Cambria", "Georgia",
                    "Times New Roman", "Comic Sans MS", "Consolas", "Montserrat", "Roboto"]
         fonts = [f for f in curated if not avail or f in avail] or curated
-        cbf = ttk.Combobox(linek, width=18, textvariable=self.sub_font, values=fonts)
+        cbf = ttk.Combobox(linek, width=16, textvariable=self.sub_font, values=fonts)
         cbf.pack(side="left", padx=6)
         cbf.bind("<<ComboboxSelected>>", lambda e: self._save_subopts())
         cbf.bind("<FocusOut>", lambda e: self._save_subopts())
+        # CỠ CHỮ phụ đề (px trên video 1080p) — viền/bóng tự dày theo cho cân đối
+        ttk.Label(linek, text="Cỡ chữ:").pack(side="left", padx=(8, 2))
+        sps = ttk.Spinbox(linek, from_=20, to=140, increment=2, width=5,
+                          textvariable=self.sub_size, command=self._save_subopts)
+        sps.pack(side="left")
+        sps.bind("<FocusOut>", lambda e: self._save_subopts())
         ttk.Label(linek, text="Màu chữ:").pack(side="left", padx=(10, 0))
         self.kara_swatch = tk.Label(linek, width=3, relief="ridge",
                                     bg=self._safe_bg(self.kara_color.get()))
@@ -839,6 +847,17 @@ class App:
                          ("kara", "Cả câu + tô màu từ đang đọc")):
             ttk.Radiobutton(linem, text=lbl, value=val, variable=self.sub_mode,
                             command=self._save_subopts).pack(side="left", padx=(8, 0))
+
+        # Cỡ chữ đặt nhanh (khỏi nhớ số px)
+        linez = ttk.Frame(f2)
+        linez.pack(fill="x", padx=10, pady=(0, 2))
+        ttk.Label(linez, text="Cỡ chữ nhanh:").pack(side="left")
+        for lbl, px in (("Nhỏ", 40), ("Vừa (mặc định)", 52), ("To", 68),
+                        ("Rất to", 84), ("Khổng lồ", 100)):
+            ttk.Button(linez, text=lbl, width=13 if "mặc định" in lbl else 8,
+                       command=lambda p=px: self._set_sub_size(p)).pack(side="left", padx=2)
+        ttk.Label(linez, foreground="#888",
+                  text="(9:16 Shorts nên để 68–84)").pack(side="left", padx=8)
 
         # Preset màu phụ đề (bấm chọn mẫu — đặt màu chữ + màu viền)
         SUB_PRESETS = [
@@ -1971,7 +1990,7 @@ class App:
         save_config(self.cfg)
 
     # ---------- HỒ SƠ KÊNH: lưu/áp trọn bộ cài đặt cho từng kênh ----------
-    _CHANNEL_KEYS = ("aspect", "sub_font", "sub_mode", "sub_outline", "kara_color",
+    _CHANNEL_KEYS = ("aspect", "sub_font", "sub_mode", "sub_outline", "sub_size", "kara_color",
                      "clip_audio", "clip_volume", "voice_volume",
                      "logo", "logo_pos", "logo_opacity", "logo_shape",
                      "title_on", "title_sec", "intro", "outro", "sfx", "sfx_volume",
@@ -1982,7 +2001,7 @@ class App:
         return {
             "aspect": self.aspect.get(), "sub_font": self.sub_font.get(),
             "sub_mode": self.sub_mode.get(), "sub_outline": self.sub_outline.get(),
-            "kara_color": self.kara_color.get(),
+            "sub_size": self.sub_size.get(), "kara_color": self.kara_color.get(),
             "clip_audio": bool(self.clip_audio.get()),
             "clip_volume": self.clip_volume.get(),
             "voice_volume": self.voice_volume.get(),
@@ -2006,6 +2025,7 @@ class App:
         self.sub_font.set(d.get("sub_font", "Arial Black"))
         self.sub_mode.set(d.get("sub_mode", "word"))
         self.sub_outline.set(d.get("sub_outline", "#000000"))
+        self.sub_size.set(str(d.get("sub_size", "52")))
         self.kara_color.set(d.get("kara_color", "#FFFF00"))
         self.clip_audio.set(bool(d.get("clip_audio", False)))
         self.clip_volume.set(str(d.get("clip_volume", "0.25")))
@@ -2162,12 +2182,19 @@ class App:
         save_config(self.cfg)
 
     def _save_subopts(self):
-        """Lưu tùy chọn phụ đề (font + cách hiện + màu) vào config."""
+        """Lưu tùy chọn phụ đề (font + cỡ chữ + cách hiện + màu) vào config."""
         self.cfg["sub_font"] = self.sub_font.get().strip()
         self.cfg["sub_mode"] = self.sub_mode.get()
         self.cfg["sub_outline"] = self.sub_outline.get().strip()
+        self.cfg["sub_size"] = self.sub_size.get().strip()
         self.cfg["kara_color"] = self.kara_color.get().strip()
         save_config(self.cfg)
+
+    def _set_sub_size(self, px):
+        """Nút cỡ chữ nhanh (Nhỏ/Vừa/To/Rất to) — đặt số px rồi lưu luôn."""
+        self.sub_size.set(str(px))
+        self._save_subopts()
+        self.status.set(tr(f"Đã đặt cỡ chữ phụ đề: {px}px."))
 
     # ============================ HÀNG ĐỢI ============================
     def _current_job(self):
@@ -2193,7 +2220,7 @@ class App:
             "bgm_volume": self.bgm_volume.get(), "duck": self.duck.get(),
             "kara_color": self.kara_color.get(),
             "sub_font": self.sub_font.get(), "sub_mode": self.sub_mode.get(),
-            "sub_outline": self.sub_outline.get(),
+            "sub_outline": self.sub_outline.get(), "sub_size": self.sub_size.get(),
         }
 
     def _job_cmd(self, job, preview=False):
@@ -2252,6 +2279,12 @@ class App:
             so = (job.get("sub_outline") or "").strip()
             if so and so.lower() not in ("#000000", "black"):
                 cmd += ["--sub-outline-color", so]
+            try:                                     # cỡ chữ (52 = mặc định, khỏi truyền)
+                ss = int(float(job.get("sub_size", "52")))
+            except (TypeError, ValueError):
+                ss = 52
+            if ss != 52:
+                cmd += ["--sub-size", str(max(20, min(140, ss)))]
         if job.get("crossfade", False):
             cmd += ["--transition", job.get("transition") or "fade"]
         if job.get("color") and job["color"] != "none":
