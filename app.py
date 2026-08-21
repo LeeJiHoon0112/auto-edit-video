@@ -22,7 +22,22 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 import i18n
 from i18n import tr
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+def _base_dir():
+    """Thư mục GỐC để đặt input/output/scenes mặc định.
+    ⚠️ Bản .exe (Nuitka onefile): `__file__` nằm trong thư mục TEMP giải nén
+    (Temp/onefile_XXXX) — thư mục này ĐỔI mỗi lần chạy và bị XÓA khi thoát app, nên
+    lấy nó làm gốc thì video khách render ra nằm trong temp và MẤT SẠCH khi đóng app
+    (ảnh khách 2026-07-30: "Xuất ra MP4: ...Temp/onefile_7372.../output/final.mp4").
+    Bản đóng gói -> lấy thư mục chứa .exe THẬT (NUITKA_ONEFILE_BINARY / argv[0])."""
+    if getattr(sys, "frozen", False) or ("__compiled__" in globals()):
+        real = os.environ.get("NUITKA_ONEFILE_BINARY") or sys.argv[0]
+        d = os.path.dirname(os.path.abspath(real))
+        if d and "onefile_" not in d:
+            return d
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+HERE = _base_dir()
 PY = sys.executable
 
 DEFAULT_STYLE = (
@@ -115,9 +130,34 @@ def load_config():
                 cfg["produce"] = "image"
         if not cfg["profiles"]:
             cfg["profiles"] = {"Người que": DEFAULT_STYLE}
+        _heal_temp_paths(cfg)      # dọn đường dẫn temp onefile đã lỡ lưu ở bản cũ
     except Exception:
         pass
     return cfg
+
+
+def _heal_temp_paths(cfg):
+    """TỰ CHỮA đường dẫn hỏng đã lưu từ bản cũ: bản .exe trước 1.2.8 lấy thư mục TEMP
+    giải nén (Temp/onefile_XXXX) làm gốc, nên ô SRT/ảnh/xuất MP4 và cả hàng đợi đều trỏ
+    vào một thư mục KHÔNG CÒN TỒN TẠI. Mở bản mới mà giữ nguyên các đường dẫn đó thì
+    khách vẫn render lỗi -> quét sạch, trả về mặc định mới (cạnh .exe)."""
+    def hong(v):
+        return isinstance(v, str) and "onefile_" in v and "Temp" in v
+
+    for k in ("srt", "images", "voice", "out", "sleep_out", "scenes_file", "bgm",
+              "logo", "intro", "outro", "sfx", "sleep_bg", "sleep_audio", "prompt_dir"):
+        if hong(cfg.get(k)):
+            cfg[k] = ""
+    for job in cfg.get("queue", []) or []:
+        if isinstance(job, dict):
+            for k, v in list(job.items()):
+                if hong(v):
+                    job[k] = ""
+    for name, d in (cfg.get("channels", {}) or {}).items():
+        if isinstance(d, dict):
+            for k, v in list(d.items()):
+                if hong(v):
+                    d[k] = ""
 
 
 def save_config(cfg):
@@ -2575,6 +2615,22 @@ if __name__ == "__main__":
             print("active      :", c.get("active_profile"))
         except Exception as e:  # noqa
             print("load_err    :", e)
+        sys.exit(0)
+    if len(sys.argv) > 1 and sys.argv[1] == "--where-ffmpeg":
+        # Chẩn đoán khi khách báo "Không tìm thấy ffmpeg": in ra ĐÚNG các đường dẫn app
+        # đang dò. Chạy: AutoEditVideo.exe --where-ffmpeg  (console off -> redirect ra file)
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:  # noqa
+            pass
+        import auto_edit as _ae
+        print("sys.executable      :", sys.executable)
+        print("sys.argv[0]         :", sys.argv[0])
+        print("NUITKA_ONEFILE_BIN  :", os.environ.get("NUITKA_ONEFILE_BINARY", "(khong co)"))
+        print("thu muc .exe THAT   :", _ae._app_dir())
+        print("HERE (input/output) :", HERE)
+        print("ffmpeg tim duoc     :", _ae.FFMPEG or "KHONG THAY")
+        print("ffprobe tim duoc    :", _ae.FFPROBE or "KHONG THAY")
         sys.exit(0)
     # Bản .exe tự gọi lại CHÍNH NÓ để chạy engine (vì không còn python + .py riêng).
     # Xem script_cmd(): khi frozen, render/sleep gọi [exe, --run-auto-edit/--run-sleep-video, ...].

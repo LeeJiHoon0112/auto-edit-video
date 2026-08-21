@@ -188,10 +188,19 @@ def _write_ass(srt_path, ass_path, width, height, karaoke_color=SUB_KARAOKE_COLO
 # Tìm FFmpeg / FFprobe (PATH hoặc thư mục cài WinGet)
 # ----------------------------------------------------------------------------
 def _app_dir():
-    """Thư mục chứa .exe (bản đóng gói Nuitka/PyInstaller) hoặc chứa script (dev).
-    Dùng để dò ffmpeg GIAO KÈM đặt cạnh tool -> khách khỏi cài FFmpeg."""
+    """Thư mục chứa .exe THẬT của khách (bản đóng gói) hoặc chứa script (dev).
+    Dùng để dò ffmpeg GIAO KÈM đặt cạnh tool -> khách khỏi cài FFmpeg.
+    ⚠️ Nuitka onefile: `sys.executable` là python.exe ẢO trong thư mục TEMP giải nén
+    (thư mục Temp/onefile_XXXX) — lấy nó ra thì dò ffmpeg SAI CHỖ, khách để ffmpeg.exe
+    cạnh AutoEditVideo.exe đúng hướng dẫn mà app vẫn báo "Không tìm thấy ffmpeg"
+    (bug khách gặp 2026-07-30; đúng họ gotcha #1). Đường dẫn exe THẬT nằm ở
+    env NUITKA_ONEFILE_BINARY hoặc sys.argv[0]."""
     if getattr(sys, "frozen", False) or ("__compiled__" in globals()):
-        return os.path.dirname(os.path.abspath(sys.executable))
+        real = os.environ.get("NUITKA_ONEFILE_BINARY") or sys.argv[0]
+        d = os.path.dirname(os.path.abspath(real))
+        if d and "onefile_" not in d:          # chắc chắn không phải temp giải nén
+            return d
+        return os.path.dirname(os.path.abspath(sys.executable))   # PyInstaller/fallback
     return os.path.dirname(os.path.abspath(__file__))
 
 
