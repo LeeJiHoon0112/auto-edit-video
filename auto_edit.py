@@ -214,6 +214,17 @@ def find_tool(name):
                  os.path.join(app, "bin", exe)):
         if os.path.isfile(cand):
             return cand
+    # 1b) Thư mục dữ liệu app (%APPDATA%\AutoEditVideo) — chỗ tính năng "Tải FFmpeg tự
+    #     động" đặt file khi thư mục cạnh .exe không ghi được (vd cài trong Program Files)
+    try:
+        import config as _cfg
+        for cand in (os.path.join(_cfg.DATA_DIR, exe),
+                     os.path.join(_cfg.DATA_DIR, "ffmpeg", exe),
+                     os.path.join(_cfg.DATA_DIR, "ffmpeg", "bin", exe)):
+            if os.path.isfile(cand):
+                return cand
+    except Exception:  # noqa
+        pass
     # 2) PATH
     p = shutil.which(name)
     if p:

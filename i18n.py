@@ -121,6 +121,48 @@ EN = {
         "🔉 Keep the clips' original audio (muted by default)",
     "Âm lượng tiếng clip:": "Clip audio volume:",
     "🎙 Âm lượng voice:": "🎙 Voice volume:",
+    "Thiếu FFmpeg":
+        "FFmpeg is missing",
+    "Máy chưa có FFmpeg — bộ công cụ xử lý video mà tool cần để render.":
+        "FFmpeg is not installed — it is the video engine this tool needs to render.",
+    "Tải tự động ngay? (khoảng 106MB, chỉ tải MỘT LẦN)":
+        "Download it now? (about 106MB, ONE time only)",
+    "Bạn không phải cài đặt gì thêm — tool tự đặt vào đúng chỗ.":
+        "Nothing else to install — the tool puts it in the right place for you.",
+    "Tải FFmpeg":
+        "Download FFmpeg",
+    "Máy đã có FFmpeg rồi. Vẫn tải lại?":
+        "FFmpeg is already installed. Download again anyway?",
+    "tải FFmpeg...":
+        "downloading FFmpeg...",
+    "Đang tải FFmpeg...":
+        "Downloading FFmpeg...",
+    "• Đang tải từ trang chính thức gyan.dev...":
+        "• Downloading from the official site (gyan.dev)...",
+    "• Đang giải nén...":
+        "• Extracting...",
+    "File tải về không hợp lệ (quá nhỏ).":
+        "The downloaded file is not valid (too small).",
+    "Không thấy ffmpeg trong file tải về.":
+        "ffmpeg was not found inside the download.",
+    "Tải xong nhưng chưa dùng được — hãy mở lại app.":
+        "Downloaded, but not usable yet — please restart the app.",
+    "Đã cài xong FFmpeg.":
+        "FFmpeg installed.",
+    "✅ XONG: FFmpeg đã sẵn sàng, bạn render được rồi.":
+        "✅ DONE: FFmpeg is ready — you can render now.",
+    "Đã cài xong FFmpeg — bạn render video được rồi.":
+        "FFmpeg is installed — you can render videos now.",
+    "Tải FFmpeg thất bại.":
+        "Downloading FFmpeg failed.",
+    "Tải FFmpeg thất bại — kiểm tra kết nối mạng rồi thử lại.":
+        "Downloading FFmpeg failed — check your internet connection and try again.",
+    "📥 Tải FFmpeg tự động":
+        "📥 Download FFmpeg automatically",
+    "FFmpeg: đã có ✓":
+        "FFmpeg: installed ✓",
+    "FFmpeg: CHƯA CÓ ✗":
+        "FFmpeg: MISSING ✗",
     "Cỡ chữ:": "Font size:",
     "Cỡ chữ nhanh:": "Quick size:",
     "Nhỏ": "Small",
@@ -376,6 +418,8 @@ RULES = [
     (re.compile(r"^  → (\d+)/(\d+) cảnh có âm thanh gốc từ clip$"),
      "  → {0}/{1} scene(s) have original clip audio"),
     (re.compile(r"^Đã đặt cỡ chữ phụ đề: (\d+)px\.$"), "Subtitle font size set to {0}px."),
+    (re.compile(r"^  \.\.\. (\d+)% \((\d+)/(\d+) MB\)$"),
+     "  ... {0}% ({1}/{2} MB)"),
     # Video ngủ: FOLDER nhiều ảnh/clip
     (re.compile(r"^• Chế độ mục DÀI: (\d+) mục × ~(.+)s \(lặp đoạn (.+)s bằng COPY, chỉ encode (\d+) đoạn \+ (\d+) mối nối\)\.\.\.$"),
      "• LONG-item mode: {0} items × ~{1}s (looping a {2}s segment by COPY — only {3} segments + {4} junctions encoded)..."),

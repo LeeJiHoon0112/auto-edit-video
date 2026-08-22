@@ -445,6 +445,8 @@ class App:
         i18n.translate_tree(root)         # áp ngôn ngữ đã chọn lên toàn bộ giao diện
         self.root.after(100, self._drain)
         self._check_update_async()          # tự hỏi server có bản mới không (nền)
+        self._refresh_ffmpeg_label()
+        self.root.after(600, self._check_ffmpeg_startup)   # thiếu ffmpeg -> mời tải tự động
 
         # Theo dõi tiến trình render để bảo vệ khi đóng app giữa chừng (#8)
         self.render_procs = []          # các subprocess render đang chạy
@@ -550,6 +552,7 @@ class App:
         self.q_count.set(tr(f"{len(self.cfg.get('queue', []))} video trong hàng đợi"))
         self._refresh_license_label()
         self._update_key_hint()
+        self._refresh_ffmpeg_label()   # nhãn động -> phải set lại tay
         self.status.set(tr("Sẵn sàng."))
 
     def _check_update_now(self):
@@ -624,6 +627,136 @@ class App:
                     pass
         else:
             messagebox.showinfo("🔔 Có bản cập nhật mới", text)
+
+    # ---------- FFMPEG: kiểm tra + TẢI TỰ ĐỘNG (khách khỏi phải tự cài) ----------
+    FFMPEG_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+
+    def _ffmpeg_ready(self):
+        """Có đủ ffmpeg + ffprobe chưa (dò LẠI mỗi lần gọi vì có thể vừa tải xong)."""
+        import auto_edit as ae
+        ae.FFMPEG = ae.find_tool("ffmpeg")
+        ae.FFPROBE = ae.find_tool("ffprobe")
+        return bool(ae.FFMPEG and ae.FFPROBE)
+
+    def _ffmpeg_dest(self):
+        """Nơi đặt ffmpeg tải về: ưu tiên CẠNH .exe (khách thấy được, gọn 1 bộ). Thư mục
+        không ghi được (vd Program Files) -> DATA_DIR (find_tool đã dò cả chỗ này)."""
+        import auto_edit as ae
+        import config
+        d = ae._app_dir()
+        try:
+            t = os.path.join(d, "_ghi_thu.tmp")
+            with open(t, "w") as f:
+                f.write("x")
+            os.remove(t)
+            return d
+        except Exception:  # noqa
+            os.makedirs(config.DATA_DIR, exist_ok=True)
+            return config.DATA_DIR
+
+    def _check_ffmpeg_startup(self):
+        """Mở app mà thiếu ffmpeg -> mời tải tự động (khách bấm 1 nút là xong)."""
+        try:
+            if self._ffmpeg_ready():
+                return
+        except Exception:  # noqa
+            return
+        if messagebox.askyesno(
+                tr("Thiếu FFmpeg"),
+                tr("Máy chưa có FFmpeg — bộ công cụ xử lý video mà tool cần để render.")
+                + "\n\n"
+                + tr("Tải tự động ngay? (khoảng 106MB, chỉ tải MỘT LẦN)")
+                + "\n\n"
+                + tr("Bạn không phải cài đặt gì thêm — tool tự đặt vào đúng chỗ.")):
+            self._download_ffmpeg()
+
+    def _download_ffmpeg(self):
+        """Tải FFmpeg bản gọn từ trang chính thức (gyan.dev) + giải nén ffmpeg.exe và
+        ffprobe.exe vào đúng chỗ, có thanh tiến độ. Chạy NỀN để không đơ giao diện."""
+        try:
+            co_roi = self._ffmpeg_ready()
+        except Exception:  # noqa
+            co_roi = False
+        if co_roi and not messagebox.askyesno(
+                tr("Tải FFmpeg"), tr("Máy đã có FFmpeg rồi. Vẫn tải lại?")):
+            return
+        dest = self._ffmpeg_dest()
+        self.log.delete("1.0", "end")
+        self._log("$ " + tr("tải FFmpeg...") + "\n\n")
+        self._busy(True)
+        self.status.set(tr("Đang tải FFmpeg..."))
+        self.pbar["value"] = 0
+
+        def worker():
+            import zipfile
+            tmpzip = os.path.join(tempfile.gettempdir(), "peipei_ffmpeg.zip")
+            try:
+                import requests
+                self.q.put(("line", tr("• Đang tải từ trang chính thức gyan.dev...") + "\n"))
+                r = requests.get(self.FFMPEG_URL, stream=True, timeout=60)
+                r.raise_for_status()
+                total = int(r.headers.get("content-length") or 0)
+                got, mark = 0, 0
+                with open(tmpzip, "wb") as f:
+                    for chunk in r.iter_content(262144):
+                        if not chunk:
+                            continue
+                        f.write(chunk)
+                        got += len(chunk)
+                        if total:
+                            pct = got * 100 // total
+                            if pct >= mark + 5:
+                                mark = pct
+                                self.q.put(("ffpct", pct))
+                                self.q.put(("line", tr("  ... %d%% (%d/%d MB)"
+                                                       % (pct, got // 1048576,
+                                                          total // 1048576)) + "\n"))
+                if os.path.getsize(tmpzip) < 20 * 1048576:
+                    raise RuntimeError(tr("File tải về không hợp lệ (quá nhỏ)."))
+                self.q.put(("line", tr("• Đang giải nén...") + "\n"))
+                lay = {}
+                with zipfile.ZipFile(tmpzip) as z:
+                    for n in z.namelist():
+                        base = n.rsplit("/", 1)[-1].lower()
+                        if base in ("ffmpeg.exe", "ffprobe.exe") and base not in lay:
+                            with z.open(n) as src, open(os.path.join(dest, base), "wb") as out:
+                                shutil.copyfileobj(src, out)
+                            lay[base] = True
+                if len(lay) < 2:
+                    raise RuntimeError(tr("Không thấy ffmpeg trong file tải về."))
+                if not self._ffmpeg_ready():
+                    raise RuntimeError(tr("Tải xong nhưng chưa dùng được — hãy mở lại app."))
+                import auto_edit as ae
+                v = subprocess.run(
+                    [ae.FFMPEG, "-version"], capture_output=True, text=True, timeout=60,
+                    creationflags=(subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)).stdout
+                dong = (v or "").splitlines()
+                if dong:
+                    self.q.put(("line", "\n" + dong[0] + "\n"))
+                self.q.put(("ffpct", 100))
+                self.q.put(("ffxong", dest))
+            except Exception as e:  # noqa
+                self.q.put(("ffloi", str(e)))
+            finally:
+                try:
+                    os.remove(tmpzip)
+                except Exception:  # noqa
+                    pass
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _refresh_ffmpeg_label(self):
+        """Cập nhật dòng trạng thái FFmpeg trong tab Cài đặt."""
+        if not hasattr(self, "ff_status"):
+            return
+        try:
+            import auto_edit as ae
+            ok = self._ffmpeg_ready()
+            self.ff_status.set(tr("FFmpeg: đã có ✓") if ok else tr("FFmpeg: CHƯA CÓ ✗"))
+            if ok and ae.FFMPEG:
+                self.ff_status.set(tr("FFmpeg: đã có ✓") + "  " + os.path.dirname(ae.FFMPEG))
+        except Exception:  # noqa
+            self.ff_status.set("")
 
     def _do_self_update(self, url):
         """FULL-AUTO update (chỉ bản .exe): tải .exe mới -> đổi tên bản đang chạy thành .old
@@ -1208,6 +1341,13 @@ class App:
         ttk.Label(ru, text=f"Phiên bản hiện tại: {self.app_ver or '?'}").pack(side="left")
         ttk.Button(ru, text="🔄 Kiểm tra cập nhật",
                    command=self._check_update_now).pack(side="right")
+        # FFmpeg: hiện trạng thái + nút TẢI TỰ ĐỘNG (khách khỏi phải tự đi cài)
+        rf = ttk.Frame(fu)
+        rf.pack(fill="x", padx=8, pady=(0, 8))
+        self.ff_status = tk.StringVar(value="")
+        ttk.Label(rf, textvariable=self.ff_status).pack(side="left")
+        ttk.Button(rf, text="📥 Tải FFmpeg tự động",
+                   command=self._download_ffmpeg).pack(side="right")
         # Ngôn ngữ / Language — đổi SỐNG toàn bộ giao diện, lưu nhớ
         self.lang_var = tk.StringVar(
             value="English" if i18n.get_lang() == "en" else "Tiếng Việt")
@@ -1624,6 +1764,27 @@ class App:
                             os.startfile(path)
                         except Exception:  # noqa
                             pass
+                elif kind == "ffpct":
+                    self.pbar["value"] = data
+                elif kind == "ffxong":
+                    self._busy(False)
+                    self.pbar["value"] = 0
+                    self._refresh_ffmpeg_label()
+                    self.status.set(tr("Đã cài xong FFmpeg."))
+                    self._log("\n" + tr("✅ XONG: FFmpeg đã sẵn sàng, bạn render được rồi.")
+                              + "\n")
+                    messagebox.showinfo(
+                        tr("Tải FFmpeg"),
+                        tr("Đã cài xong FFmpeg — bạn render video được rồi."))
+                elif kind == "ffloi":
+                    self._busy(False)
+                    self.pbar["value"] = 0
+                    self.status.set(tr("Tải FFmpeg thất bại."))
+                    self._log("\n" + "✗ " + str(data) + "\n")
+                    messagebox.showerror(
+                        tr("Tải FFmpeg"),
+                        tr("Tải FFmpeg thất bại — kiểm tra kết nối mạng rồi thử lại.")
+                        + "\n\n" + str(data))
                 elif kind == "selfupdate_done":
                     self.rendering = False
                     self.root.destroy()          # bản mới đã mở -> thoát bản cũ
